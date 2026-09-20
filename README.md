@@ -1,1 +1,1 @@
-# EnemAI
+# BullsAI
