@@ -272,7 +272,7 @@ namespace EnemAI
             else if (aggro >= 40.0 && aggro < 75.0)
             {
                 enemyIcon.BackColor = Color.Orange;
-                enemyIcon.Text = "DEFENDING\n🛡️";
+                enemyIcon.Text = "ALERT\n👁️";
                 currentState = "DEFENDING";
             }
             else
@@ -299,7 +299,7 @@ namespace EnemAI
 
         private void ResetDemo()
         {
-            enemyImage = Image.FromFile(@"C:\\Users\Kashkin\Pictures\Screenshots\Skeleton.png");
+            enemyImage = Properties.Resources.Skeleton;
             playerPos = new PointF((float)rng.NextDouble() * FieldW, (float)rng.NextDouble() * FieldH);
             enemyFieldPos = new PointF((float)rng.NextDouble() * FieldW, (float)rng.NextDouble() * FieldH);
             trackBar_EHealth.Value = 100;
