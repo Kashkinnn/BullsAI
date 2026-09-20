@@ -22,28 +22,40 @@ namespace EnemAI
             double healthMed = TriangularMembership(health, 25, 50, 80);
             double healthHigh = TriangularMembership(health, 60, 100, 100);
 
-            double distanceLow = TriangularMembership(distance, 0, 0, 20);
+            double distanceNear = TriangularMembership(distance, 0, 0, 20);
             double distanceMed = TriangularMembership(distance, 10, 25, 40);
-            double distanceHigh = TriangularMembership(distance, 30, 50, 50);
+            double distanceFar = TriangularMembership(distance, 30, 50, 50);
+
+            /*
+               (include this for general documentation)
+               if health is 0, and distance is any = dead
+               if health is low and distance is mid or close = flee CHECK : Might produce result "ALERT" due to Near-distace health transition(Straddling)
+               if health is any and distance is far = idle CHECK
+               if health is mid or high and distance is mid = alert CHECK
+               if health is mid or high and distance is close = attack CHECK
+           */
 
             // Rule evaluation (MIN operator)
-            double rule1 = Math.Min(healthHigh, distanceLow);  // Attacking
-            double rule2 = Math.Min(healthLow, distanceLow);   // Fleeing
-            double rule3 = Math.Min(healthMed, distanceMed);   // Alert
-            double rule4 = Math.Min(healthLow, distanceHigh);  // Idle
-            double rule5 = Math.Min(healthHigh, distanceHigh); // Idle
-            double rule6 = Math.Min(healthHigh, distanceMed);  // Alert
-            double rule7 = Math.Min(healthLow, distanceMed);   // Fleeing
-            double rule8 = Math.Min(healthMed, distanceLow);   // Attacking
-            double rule9 = Math.Min(healthMed, distanceHigh);  // Idle
+            double rule2 = Math.Min(healthLow, distanceNear);   // Fleeing CHECK
+            double rule7 = Math.Min(healthLow, distanceMed);   // Fleeing CHECK
+
+            double rule4 = Math.Min(healthLow, distanceFar);  // Idle CHECK
+            double rule9 = Math.Min(healthMed, distanceFar);  // Idle CHECK
+            double rule5 = Math.Min(healthHigh, distanceFar); // Idle CHECK
+
+            double rule3 = Math.Min(healthMed, distanceMed);   // Alert CHECK
+            double rule6 = Math.Min(healthHigh, distanceMed);  // Alert CHECK
+
+            double rule8 = Math.Min(healthMed, distanceNear);   // Attacking CHECK
+            double rule1 = Math.Min(healthHigh, distanceNear);  // Attacking CHECK
 
             // Defuzzification via Centroid (Center of Gravity)
             double sumNum = 0.0, sumDen = 0.0;
             for (double y = 0.0; y <= 100.0; y += 1.0)
             {
-                double outIdle = TriangularMembership(y, 0, 0, 20);
-                double outFleeing = TriangularMembership(y, 10, 30, 50);
-                double outAlert = TriangularMembership(y, 40, 60, 80);
+                double outFleeing = TriangularMembership(y, 0, 0, 25);
+                double outIdle = TriangularMembership(y, 15, 30, 45);
+                double outAlert = TriangularMembership(y, 35, 60, 80);
                 double outAttacking = TriangularMembership(y, 70, 100, 100);
 
                 double clipFleeing = Math.Min(Math.Max(rule2, rule7), outFleeing);
@@ -58,10 +70,15 @@ namespace EnemAI
 
             double aggro = (sumDen > 0.0) ? (sumNum / sumDen) : 0.0;
 
-            string state = "IDLE";
-            if (aggro >= 75.0) state = "ATTACKING";
-            else if (aggro >= 40.0) state = "ALERT";
-            else if (aggro >= 15.0) state = "FLEEING";
+            string state;
+            if (aggro >= 75.0)
+                state = "ATTACKING";
+            else if (aggro >= 45.0)
+                state = "ALERT";
+            else if (aggro >= 15.0)
+                state = "IDLE";
+            else
+                state = "FLEEING";
 
             return new FuzzyResult { Aggressiveness = aggro, State = state };
         }
