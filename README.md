@@ -80,7 +80,6 @@ One crisp exception exists outside the fuzzy engine: `Health ≤ 0` immediately 
 | Start | Begin the live simulation |
 | Stop | Pause the simulation |
 | Attack (−10 HP) | Damage the enemy to test health-driven behavior changes |
-| Reset | Randomize positions and restore full health |
 
 ## Known Limitation: Defuzzification Straddling
 
