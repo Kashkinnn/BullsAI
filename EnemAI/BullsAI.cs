@@ -15,8 +15,10 @@ namespace EnemAI
         private const double AnimSmoothing = 0.2;
 
         private TrackBar trackBar_EHealth, trackBar_PDistance;
+        private TrackBar trackBar_PlayerSpeed, trackBar_EnemySpeed;
         private Label label_EHealth, label_PDistance, enemyIcon, label_Aggro;
         private Panel field;
+        private DoubleBufferedPanel designField;
         private System.Windows.Forms.Timer demoTimer;
         private HashSet<Keys> keysDown = new HashSet<Keys>();
         private Image enemyImage;
@@ -30,7 +32,11 @@ namespace EnemAI
         private EnemyAgent enemy = new EnemyAgent();
         private PointF playerPos;
         private bool demoRunning = false;
-        private const float FieldW = 920, FieldH = 780, CircleSize = 30, PlayerSpeed = 3f, EnemySpeed = 2f;
+        private bool isDesignMode = false;
+        private Button btnDesignEnv;
+
+        private const float FieldW = 920, FieldH = 780, CircleSize = 30;
+        private float playerSpeed = 3f, enemySpeed = 2f;
         private Random rng = new Random();
 
         private bool isDraggingPlayer = false;
@@ -38,10 +44,16 @@ namespace EnemAI
         private float lastEnemyHeight = 18;
         private const float IsoScaleX = 0.6f, IsoScaleY = 0.32f;
 
+        private float camOffsetX = 0f;
+        private float camOffsetY = 0f;
+
         private Queue<PointF> playerTrail = new Queue<PointF>();
         private Queue<PointF> enemyTrail = new Queue<PointF>();
         private const int MaxTrailLength = 15;
         private int tickCounter = 0;
+
+        private HashSet<Point> gridBlocks = new HashSet<Point>();
+        private const int TileSize = 40;
 
         public BullsAI()
         {
@@ -58,14 +70,8 @@ namespace EnemAI
 
         private void LoadEnemyResource()
         {
-            try
-            {
-                enemyImage = Properties.Resources.Skeleton;
-            }
-            catch
-            {
-                enemyImage = null;
-            }
+            try { enemyImage = Properties.Resources.Skeleton; }
+            catch { enemyImage = null; }
         }
 
         private void InitializeUI()
@@ -82,17 +88,17 @@ namespace EnemAI
             statusGroup.Controls.Add(label_Aggro);
             this.Controls.Add(statusGroup);
 
-            GroupBox inputGroup = new GroupBox { Text = "Manual Controls", Location = new Point(20, 245), Size = new Size(360, 470) };
+            GroupBox inputGroup = new GroupBox { Text = "Manual Controls", Location = new Point(20, 245), Size = new Size(360, 620) };
             label_EHealth = new Label { Text = "100%", Location = new Point(290, 30), AutoSize = true, ForeColor = Color.Green };
             trackBar_EHealth = new TrackBar { Minimum = 0, Maximum = 100, Value = 100, Location = new Point(15, 55), Width = 320 };
-            trackBar_EHealth.Scroll += (s, e) => UpdateAiState();
+            trackBar_EHealth.Scroll += (s, e) => UpdateAiState(true);
 
             label_PDistance = new Label { Text = "50m", Location = new Point(290, 110), AutoSize = true, ForeColor = Color.Blue };
             trackBar_PDistance = new TrackBar { Minimum = 1, Maximum = 51, Value = 51, Location = new Point(15, 135), Width = 320, TickFrequency = 5 };
             trackBar_PDistance.Scroll += (s, e) =>
             {
                 EnforceDistanceVisually(trackBar_PDistance.Value);
-                UpdateAiState();
+                UpdateAiState(true);
             };
 
             inputGroup.Controls.AddRange(new Control[] {
@@ -120,20 +126,30 @@ namespace EnemAI
             inputGroup.Controls.Add(ruleTriggerLabel);
 
             FlowLayoutPanel ruleButtons = new FlowLayoutPanel { Location = new Point(15, 345), Size = new Size(335, 110), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
-            AddEdgeButton(ruleButtons, "R1", 100, 1, 105);
+            AddEdgeButton(ruleButtons, "R1 (High/Near)", 100, 1, 105);
             AddEdgeButton(ruleButtons, "R2 (Low/Near)", 1, 1, 105);
-            AddEdgeButton(ruleButtons, "R3", 50, 25, 105);
+            AddEdgeButton(ruleButtons, "R3 (Med/Med)", 50, 25, 105);
             AddEdgeButton(ruleButtons, "R4 (Low/Far)", 1, 51, 105);
             AddEdgeButton(ruleButtons, "R5 (High/Far)", 100, 51, 105);
-            AddEdgeButton(ruleButtons, "R6", 100, 25, 105);
+            AddEdgeButton(ruleButtons, "R6 (High/Med)", 100, 25, 105);
             AddEdgeButton(ruleButtons, "R7 (Low/Med)", 1, 25, 105);
-            AddEdgeButton(ruleButtons, "R8", 50, 1, 105);
+            AddEdgeButton(ruleButtons, "R8 (Med/Near)", 50, 1, 105);
             AddEdgeButton(ruleButtons, "R9 (Med/Far)", 50, 51, 105);
             inputGroup.Controls.Add(ruleButtons);
 
+            Label pSpeedLbl = new Label { Text = "Player Speed", Location = new Point(15, 465), AutoSize = true };
+            trackBar_PlayerSpeed = new TrackBar { Minimum = 1, Maximum = 10, Value = 3, Location = new Point(15, 485), Width = 320 };
+            trackBar_PlayerSpeed.Scroll += (s, e) => { playerSpeed = trackBar_PlayerSpeed.Value; };
+
+            Label eSpeedLbl = new Label { Text = "Enemy Speed", Location = new Point(15, 535), AutoSize = true };
+            trackBar_EnemySpeed = new TrackBar { Minimum = 1, Maximum = 10, Value = 2, Location = new Point(15, 555), Width = 320 };
+            trackBar_EnemySpeed.Scroll += (s, e) => { enemySpeed = trackBar_EnemySpeed.Value; };
+
+            inputGroup.Controls.AddRange(new Control[] { pSpeedLbl, trackBar_PlayerSpeed, eSpeedLbl, trackBar_EnemySpeed });
             this.Controls.Add(inputGroup);
 
-            GroupBox demoGroup = new GroupBox { Text = "Live Demo (WASD to move, drag circles) - Isometric View", Location = new Point(390, 15), Size = new Size(950, 920), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            GroupBox demoGroup = new GroupBox { Text = "Live Demo (Dynamic Camera, Click Blocks)", Location = new Point(390, 15), Size = new Size(950, 920), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+
             field = new DoubleBufferedPanel { Location = new Point(15, 25), Size = new Size((int)FieldW, (int)FieldH), BackColor = Color.FromArgb(235, 240, 245), BorderStyle = BorderStyle.FixedSingle };
             field.TabStop = true;
             field.Paint += Field_Paint;
@@ -142,15 +158,32 @@ namespace EnemAI
             field.MouseUp += Field_MouseUp;
             demoGroup.Controls.Add(field);
 
-            FlowLayoutPanel buttons = new FlowLayoutPanel { Location = new Point(15, (int)FieldH + 35), Size = new Size((int)FieldW, 50) };
+            designField = new DoubleBufferedPanel { Location = new Point(15, 25), Size = new Size((int)FieldW, (int)FieldH), BackColor = Color.FromArgb(30, 35, 40), BorderStyle = BorderStyle.FixedSingle, Visible = false };
+            designField.TabStop = true;
+            designField.Paint += DesignField_Paint;
+            designField.MouseDown += DesignField_MouseDown;
+            designField.MouseMove += DesignField_MouseMove;
+            demoGroup.Controls.Add(designField);
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel { Location = new Point(15, (int)FieldH + 35), Size = new Size((int)FieldW - 150, 50) };
             Button btnStart = new Button { Text = "Set", Size = new Size(90, 32), BackColor = Color.LightGreen, FlatStyle = FlatStyle.Flat };
             btnStart.Click += (s, e) => { demoRunning = true; ResetPositions(); demoTimer.Start(); field.Focus(); };
             Button btnStop = new Button { Text = "Stop", Size = new Size(90, 32), BackColor = Color.LightCoral, FlatStyle = FlatStyle.Flat };
             btnStop.Click += (s, e) => { demoRunning = false; demoTimer.Stop(); field.Invalidate(); };
             Button btnHit = new Button { Text = "Attack (-10 HP)", Size = new Size(130, 32) };
-            btnHit.Click += (s, e) => { trackBar_EHealth.Value = Math.Max(0, trackBar_EHealth.Value - 10); UpdateAiState(); };
-            buttons.Controls.AddRange(new Control[] { btnStart, btnStop, btnHit });
+            btnHit.Click += (s, e) => { trackBar_EHealth.Value = Math.Max(0, trackBar_EHealth.Value - 10); UpdateAiState(true); };
+            Button btnClear = new Button { Text = "Clear Blocks", Size = new Size(100, 32) };
+            btnClear.Click += (s, e) => { gridBlocks.Clear(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
+            Button btnRandomEnv = new Button { Text = "Randomize", Size = new Size(100, 32) };
+            btnRandomEnv.Click += (s, e) => { GenerateEnvironment(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
+
+            buttons.Controls.AddRange(new Control[] { btnStart, btnStop, btnHit, btnClear, btnRandomEnv });
             demoGroup.Controls.Add(buttons);
+
+            btnDesignEnv = new Button { Text = "2D", Size = new Size(135, 32), Location = new Point((int)FieldW - 120, (int)FieldH + 35), BackColor = Color.LightSkyBlue, FlatStyle = FlatStyle.Flat };
+            btnDesignEnv.Click += (s, e) => ToggleDesignMode();
+            demoGroup.Controls.Add(btnDesignEnv);
+
             this.Controls.Add(demoGroup);
 
             GroupBox graphGroup = new GroupBox { Text = "Fuzzy Visualization", Location = new Point(1360, 15), Size = new Size(460, 920), Anchor = AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom };
@@ -162,11 +195,8 @@ namespace EnemAI
                 DomainMax = 100,
                 Location = new Point(10, 44),
                 Size = new Size(435, 105),
-                Sets = new List<(string, double, double, double, Color)>
-                {
-                    ("Low", 1, 1, 40, Color.IndianRed),
-                    ("Med", 25, 50, 80, Color.Goldenrod),
-                    ("High", 60, 100, 100, Color.SeaGreen)
+                Sets = new List<(string, double, double, double, Color)> {
+                    ("Low", 1, 1, 40, Color.IndianRed), ("Med", 25, 50, 80, Color.Goldenrod), ("High", 60, 100, 100, Color.SeaGreen)
                 }
             };
 
@@ -177,11 +207,8 @@ namespace EnemAI
                 DomainMax = 51,
                 Location = new Point(10, 177),
                 Size = new Size(435, 105),
-                Sets = new List<(string, double, double, double, Color)>
-                {
-                    ("Near", 0, 0, 20, Color.SeaGreen),
-                    ("Med", 10, 25, 40, Color.Goldenrod),
-                    ("Far", 30, 50, 50, Color.IndianRed)
+                Sets = new List<(string, double, double, double, Color)> {
+                    ("Near", 0, 0, 20, Color.SeaGreen), ("Med", 10, 25, 40, Color.Goldenrod), ("Far", 30, 50, 50, Color.IndianRed)
                 }
             };
 
@@ -202,32 +229,49 @@ namespace EnemAI
                 Font = new Font("Segoe UI", 7.5f)
             };
             ruleGrid.RowTemplate.Height = 18;
-            ruleGrid.Columns.Add("Rule", "Rule");
-            ruleGrid.Columns.Add("Health", "Health");
-            ruleGrid.Columns.Add("Dist", "Dist");
-            ruleGrid.Columns.Add("Output", "Output");
-            ruleGrid.Columns.Add("Strength", "Strength");
+            ruleGrid.Columns.Add("Rule", "Rule"); ruleGrid.Columns.Add("Health", "Health"); ruleGrid.Columns.Add("Dist", "Dist");
+            ruleGrid.Columns.Add("Output", "Output"); ruleGrid.Columns.Add("Strength", "Strength");
             foreach (DataGridViewColumn col in ruleGrid.Columns) col.Width = 82;
 
             Label surfaceLabel = new Label { Text = "Control Surface (Health x Distance -> Aggro)", Location = new Point(10, 655), Size = new Size(435, 16), Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.DimGray };
             surfacePanel = new ControlSurfacePanel { Location = new Point(10, 674), Size = new Size(435, 220) };
             surfacePanel.BuildSurface();
 
-            graphGroup.Controls.Add(healthLabel);
-            graphGroup.Controls.Add(healthGraph);
-            graphGroup.Controls.Add(distanceLabel);
-            graphGroup.Controls.Add(distanceGraph);
-            graphGroup.Controls.Add(outputLabel);
-            graphGroup.Controls.Add(outputGraph);
-            graphGroup.Controls.Add(ruleLabel);
-            graphGroup.Controls.Add(ruleGrid);
-            graphGroup.Controls.Add(surfaceLabel);
-            graphGroup.Controls.Add(surfacePanel);
-
+            graphGroup.Controls.AddRange(new Control[] { healthLabel, healthGraph, distanceLabel, distanceGraph, outputLabel, outputGraph, ruleLabel, ruleGrid, surfaceLabel, surfacePanel });
             this.Controls.Add(graphGroup);
 
             this.KeyDown += (s, e) => keysDown.Add(e.KeyCode);
             this.KeyUp += (s, e) => keysDown.Remove(e.KeyCode);
+        }
+
+        private void ToggleDesignMode()
+        {
+            isDesignMode = !isDesignMode;
+            if (isDesignMode)
+            {
+                btnDesignEnv.Text = "3D";
+                btnDesignEnv.BackColor = Color.LightSalmon;
+                field.Visible = false;
+                designField.Visible = true;
+                designField.Invalidate();
+            }
+            else
+            {
+                btnDesignEnv.Text = "2D";
+                btnDesignEnv.BackColor = Color.LightSkyBlue;
+                designField.Visible = false;
+                field.Visible = true;
+                field.Invalidate();
+            }
+        }
+
+        private void GenerateEnvironment()
+        {
+            int cols = (int)(FieldW / TileSize);
+            int rows = (int)(FieldH / TileSize);
+            Point pGrid = new Point((int)(playerPos.X / TileSize), (int)(playerPos.Y / TileSize));
+            Point eGrid = new Point((int)(enemy.Position.X / TileSize), (int)(enemy.Position.Y / TileSize));
+            gridBlocks = EnvironmentGenerator.Generate(cols, rows, 30, rng, pGrid, eGrid);
         }
 
         private void AddEdgeButton(FlowLayoutPanel panel, string label, int health, int distance, int width = 100)
@@ -238,7 +282,7 @@ namespace EnemAI
                 trackBar_EHealth.Value = Math.Max(trackBar_EHealth.Minimum, Math.Min(trackBar_EHealth.Maximum, health));
                 trackBar_PDistance.Value = Math.Max(trackBar_PDistance.Minimum, Math.Min(trackBar_PDistance.Maximum, distance));
                 EnforceDistanceVisually(trackBar_PDistance.Value);
-                UpdateAiState();
+                UpdateAiState(true);
             };
             panel.Controls.Add(b);
         }
@@ -261,7 +305,7 @@ namespace EnemAI
                 {
                     playerPos = new PointF(px, py);
                     enemy.Position = new PointF(ex, ey);
-                    field.Invalidate();
+                    if (isDesignMode) designField.Invalidate(); else field.Invalidate();
                     return;
                 }
             }
@@ -271,23 +315,43 @@ namespace EnemAI
             enemy.Position = new PointF((float)Math.Cos(maxAngle) * pxDist, (float)Math.Sin(maxAngle) * pxDist);
             enemy.Position.X = Math.Max(0, Math.Min(FieldW - CircleSize, enemy.Position.X));
             enemy.Position.Y = Math.Max(0, Math.Min(FieldH - CircleSize, enemy.Position.Y));
-            field.Invalidate();
+            if (isDesignMode) designField.Invalidate(); else field.Invalidate();
         }
 
         private void ResetPositions()
         {
             trackBar_EHealth.Value = 100;
-            EnforceDistanceVisually(trackBar_PDistance.Value);
+
+            playerPos = new PointF((float)rng.NextDouble() * (FieldW - CircleSize), (float)rng.NextDouble() * (FieldH - CircleSize));
+            enemy.Position = new PointF((float)rng.NextDouble() * (FieldW - CircleSize), (float)rng.NextDouble() * (FieldH - CircleSize));
+
+            double distPx = Math.Sqrt(Math.Pow(playerPos.X - enemy.Position.X, 2) + Math.Pow(playerPos.Y - enemy.Position.Y, 2));
+            double diagonal = Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
+            trackBar_PDistance.Value = Math.Max(1, Math.Min(51, (int)(distPx / diagonal * 51)));
+
             enemy.ResetCommitment();
-            UpdateAiState();
+            UpdateAiState(true);
+
+            if (isDesignMode) designField.Invalidate();
+            else field.Invalidate();
         }
 
-        private void UpdateAiState()
+        private List<RectangleF> GetObstacleRects()
+        {
+            List<RectangleF> rects = new List<RectangleF>();
+            foreach (var b in gridBlocks)
+            {
+                rects.Add(new RectangleF(b.X * TileSize, b.Y * TileSize, TileSize, TileSize));
+            }
+            return rects;
+        }
+
+        private void UpdateAiState(bool isManualOverride = false)
         {
             label_EHealth.Text = $"{trackBar_EHealth.Value}%";
             label_PDistance.Text = trackBar_PDistance.Value >= 51 ? ">50m" : $"{trackBar_PDistance.Value}m";
 
-            enemy.UpdateBehavior(trackBar_EHealth.Value, trackBar_PDistance.Value);
+            enemy.UpdateBehavior(trackBar_EHealth.Value, trackBar_PDistance.Value, playerPos, GetObstacleRects(), isManualOverride);
             label_Aggro.Text = $"Aggressiveness {enemy.CurrentAggro:F1}%";
 
             targetHealth = trackBar_EHealth.Value;
@@ -295,31 +359,15 @@ namespace EnemAI
             targetAggro = enemy.CurrentAggro;
 
             outputGraph.Curve = enemy.LastResult.Curve ?? new List<(double, double)>();
-
             RefreshRuleGrid();
 
             switch (enemy.CurrentState)
             {
-                case "DEAD":
-                    enemyIcon.BackColor = Color.Black;
-                    enemyIcon.Text = "DEAD\n☠️";
-                    break;
-                case "IDLE":
-                    enemyIcon.BackColor = Color.LightGray;
-                    enemyIcon.Text = "IDLE\n💤";
-                    break;
-                case "FLEEING":
-                    enemyIcon.BackColor = Color.RoyalBlue;
-                    enemyIcon.Text = "FLEEING\n😨";
-                    break;
-                case "ALERT":
-                    enemyIcon.BackColor = Color.DarkOrange;
-                    enemyIcon.Text = "ALERT\n👁️";
-                    break;
-                case "ATTACKING":
-                    enemyIcon.BackColor = Color.DarkRed;
-                    enemyIcon.Text = "ATTACKING\n⚔️";
-                    break;
+                case "DEAD": enemyIcon.BackColor = Color.Black; enemyIcon.Text = "DEAD\n☠️"; break;
+                case "IDLE": enemyIcon.BackColor = Color.LightGray; enemyIcon.Text = "IDLE\n💤"; break;
+                case "FLEEING": enemyIcon.BackColor = Color.RoyalBlue; enemyIcon.Text = "FLEEING\n😨"; break;
+                case "ALERT": enemyIcon.BackColor = Color.DarkOrange; enemyIcon.Text = "ALERT\n👁️"; break;
+                case "ATTACKING": enemyIcon.BackColor = Color.DarkRed; enemyIcon.Text = "ATTACKING\n⚔️"; break;
             }
         }
 
@@ -335,10 +383,7 @@ namespace EnemAI
             surfacePanel.MarkerHealth = dispHealth;
             surfacePanel.MarkerDistance = dispDistance;
 
-            healthGraph.Invalidate();
-            distanceGraph.Invalidate();
-            outputGraph.Invalidate();
-            surfacePanel.Invalidate();
+            healthGraph.Invalidate(); distanceGraph.Invalidate(); outputGraph.Invalidate(); surfacePanel.Invalidate();
         }
 
         private void RefreshRuleGrid()
@@ -348,7 +393,6 @@ namespace EnemAI
             if (rules == null || rules.Count == 0) return;
 
             var sortedRules = rules.OrderBy(kv => kv.Key).ToList();
-
             foreach (var kv in sortedRules)
             {
                 int rowIdx = ruleGrid.Rows.Add(kv.Key, kv.Value.healthSet, kv.Value.distSet, kv.Value.output, kv.Value.strength.ToString("F2"));
@@ -360,9 +404,22 @@ namespace EnemAI
             }
         }
 
+        private bool IsColliding(float x, float y)
+        {
+            RectangleF rect = new RectangleF(x, y, CircleSize, CircleSize);
+            foreach (var obs in GetObstacleRects())
+                if (obs.IntersectsWith(rect)) return true;
+            return false;
+        }
+
         private void DemoTimer_Tick(object sender, EventArgs e)
         {
             tickCounter++;
+
+            float targetCamX = (FieldW / 2f) - playerPos.X;
+            float targetCamY = (FieldH / 2f) - playerPos.Y;
+            camOffsetX += (targetCamX - camOffsetX) * 0.1f;
+            camOffsetY += (targetCamY - camOffsetY) * 0.1f;
 
             if (!isDraggingPlayer)
             {
@@ -375,8 +432,11 @@ namespace EnemAI
                 if (dx != 0 || dy != 0)
                 {
                     float len = (float)Math.Sqrt(dx * dx + dy * dy);
-                    playerPos.X = Math.Max(0, Math.Min(FieldW - CircleSize, playerPos.X + dx / len * PlayerSpeed));
-                    playerPos.Y = Math.Max(0, Math.Min(FieldH - CircleSize, playerPos.Y + dy / len * PlayerSpeed));
+                    float mx = (dx / len) * playerSpeed;
+                    float my = (dy / len) * playerSpeed;
+
+                    if (!IsColliding(playerPos.X + mx, playerPos.Y)) playerPos.X = Math.Max(0, Math.Min(FieldW - CircleSize, playerPos.X + mx));
+                    if (!IsColliding(playerPos.X, playerPos.Y + my)) playerPos.Y = Math.Max(0, Math.Min(FieldH - CircleSize, playerPos.Y + my));
                 }
             }
 
@@ -384,10 +444,10 @@ namespace EnemAI
             double diagonal = Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
             trackBar_PDistance.Value = Math.Max(1, Math.Min(51, (int)(distPx / diagonal * 51)));
 
-            UpdateAiState();
+            UpdateAiState(false);
 
             if (!isDraggingEnemy)
-                enemy.Move(playerPos, EnemySpeed, FieldW, FieldH, CircleSize);
+                enemy.Move(playerPos, enemySpeed, 0.05f, FieldW, FieldH, CircleSize, GetObstacleRects());
 
             playerTrail.Enqueue(new PointF(playerPos.X, playerPos.Y));
             if (playerTrail.Count > MaxTrailLength) playerTrail.Dequeue();
@@ -395,11 +455,14 @@ namespace EnemAI
             enemyTrail.Enqueue(new PointF(enemy.Position.X, enemy.Position.Y));
             if (enemyTrail.Count > MaxTrailLength) enemyTrail.Dequeue();
 
-            field.Invalidate();
+            if (isDesignMode) designField.Invalidate();
+            else field.Invalidate();
         }
 
         private PointF ToIso(float x, float y, float z = 0)
         {
+            x += camOffsetX;
+            y += camOffsetY;
             float isoX = (x - y) * IsoScaleX;
             float isoY = (x + y) * IsoScaleY - z;
             return new PointF(isoX + FieldW / 2.2f, isoY + 70);
@@ -413,23 +476,22 @@ namespace EnemAI
             float sy = screen.Y - offsetY + z;
             float x = (sx / IsoScaleX + sy / IsoScaleY) / 2f;
             float y = (sy / IsoScaleY - sx / IsoScaleX) / 2f;
+            x -= camOffsetX;
+            y -= camOffsetY;
             return new PointF(x, y);
         }
 
         private void Field_MouseDown(object sender, MouseEventArgs e)
         {
             field.Focus();
-
             PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26);
             PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, lastEnemyHeight);
 
             float distToPlayer = (float)Math.Sqrt(Math.Pow(e.X - playerTop.X, 2) + Math.Pow(e.Y - playerTop.Y, 2));
             float distToEnemy = (float)Math.Sqrt(Math.Pow(e.X - enemyTop.X, 2) + Math.Pow(e.Y - enemyTop.Y, 2));
 
-            if (distToPlayer < CircleSize / 2f)
-                isDraggingPlayer = true;
-            else if (distToEnemy < CircleSize / 2f)
-                isDraggingEnemy = true;
+            if (distToPlayer < CircleSize / 2f) isDraggingPlayer = true;
+            else if (distToEnemy < CircleSize / 2f) isDraggingEnemy = true;
         }
 
         private void Field_MouseMove(object sender, MouseEventArgs e)
@@ -444,19 +506,94 @@ namespace EnemAI
             else if (isDraggingEnemy)
             {
                 PointF world = FromIso(e.Location, lastEnemyHeight);
-                enemy.Position = new PointF(
-                    Math.Max(0, Math.Min(FieldW - CircleSize, world.X)),
-                    Math.Max(0, Math.Min(FieldH - CircleSize, world.Y))
-                );
+                enemy.Position = new PointF(Math.Max(0, Math.Min(FieldW - CircleSize, world.X)), Math.Max(0, Math.Min(FieldH - CircleSize, world.Y)));
                 field.Invalidate();
             }
         }
 
         private void Field_MouseUp(object sender, MouseEventArgs e)
         {
-            isDraggingPlayer = false;
-            isDraggingEnemy = false;
-            field.Focus();
+            isDraggingPlayer = false; isDraggingEnemy = false; field.Focus();
+        }
+
+        private void DesignField_MouseDown(object sender, MouseEventArgs e)
+        {
+            designField.Focus();
+            HandleDesignInput(e);
+        }
+
+        private void DesignField_MouseMove(object sender, MouseEventArgs e)
+        {
+            HandleDesignInput(e);
+        }
+
+        private void HandleDesignInput(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right)
+            {
+                int tx = (int)(e.X / TileSize);
+                int ty = (int)(e.Y / TileSize);
+
+                if (tx >= 0 && ty >= 0 && tx < FieldW / TileSize && ty < FieldH / TileSize)
+                {
+                    Point gridPt = new Point(tx, ty);
+                    if (e.Button == MouseButtons.Left) gridBlocks.Add(gridPt);
+                    else if (e.Button == MouseButtons.Right) gridBlocks.Remove(gridPt);
+                    designField.Invalidate();
+                }
+            }
+        }
+
+        private void DesignField_Paint(object sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            using (Pen gridPen = new Pen(Color.FromArgb(80, 100, 100, 100), 1))
+            {
+                for (int x = 0; x <= FieldW; x += TileSize) g.DrawLine(gridPen, x, 0, x, FieldH);
+                for (int y = 0; y <= FieldH; y += TileSize) g.DrawLine(gridPen, 0, y, FieldW, y);
+            }
+
+            using (Brush blockBrush = new SolidBrush(Color.SlateGray))
+            using (Pen blockBorder = new Pen(Color.Black, 1))
+            {
+                foreach (var b in gridBlocks)
+                {
+                    g.FillRectangle(blockBrush, b.X * TileSize, b.Y * TileSize, TileSize, TileSize);
+                    g.DrawRectangle(blockBorder, b.X * TileSize, b.Y * TileSize, TileSize, TileSize);
+                }
+            }
+
+            g.FillEllipse(Brushes.RoyalBlue, playerPos.X, playerPos.Y, CircleSize, CircleSize);
+            g.DrawString("P", new Font("Arial", 10, FontStyle.Bold), Brushes.White, playerPos.X + 8, playerPos.Y + 8);
+
+            Color stateColor = GetStateColor(enemy.CurrentState);
+            g.FillEllipse(new SolidBrush(stateColor), enemy.Position.X, enemy.Position.Y, CircleSize, CircleSize);
+            g.DrawString("E", new Font("Arial", 10, FontStyle.Bold), Brushes.White, enemy.Position.X + 8, enemy.Position.Y + 8);
+        }
+
+        private void DrawIsoCube(Graphics g, RectangleF rect, float height)
+        {
+            PointF p2 = ToIso(rect.Right, rect.Y);
+            PointF p3 = ToIso(rect.Right, rect.Bottom);
+            PointF p4 = ToIso(rect.X, rect.Bottom);
+
+            PointF t1 = ToIso(rect.X, rect.Y, height);
+            PointF t2 = ToIso(rect.Right, rect.Y, height);
+            PointF t3 = ToIso(rect.Right, rect.Bottom, height);
+            PointF t4 = ToIso(rect.X, rect.Bottom, height);
+
+            using (Brush b = new SolidBrush(Color.SlateGray)) g.FillPolygon(b, new[] { p4, p3, t3, t4 });
+            using (Brush b = new SolidBrush(Color.LightSlateGray)) g.FillPolygon(b, new[] { p2, p3, t3, t2 });
+            using (Brush b = new SolidBrush(Color.Silver)) g.FillPolygon(b, new[] { t1, t2, t3, t4 });
+
+            using (Pen p = new Pen(Color.DimGray))
+            {
+                g.DrawPolygon(p, new[] { t1, t2, t3, t4 });
+                g.DrawLine(p, p4, t4); g.DrawLine(p, p3, t3); g.DrawLine(p, p2, t2);
+                g.DrawLine(p, p4, p3); g.DrawLine(p, p2, p3);
+            }
         }
 
         private void Field_Paint(object sender, PaintEventArgs e)
@@ -470,17 +607,13 @@ namespace EnemAI
             using (Brush darkTile = new SolidBrush(Color.FromArgb(225, 230, 240)))
             using (Pen gridPen = new Pen(Color.FromArgb(50, Color.SlateGray), 1))
             {
-                int tileSize = 40;
-                for (int gx = 0; gx < FieldW; gx += tileSize)
+                for (int gx = 0; gx < FieldW; gx += TileSize)
                 {
-                    for (int gy = 0; gy < FieldH; gy += tileSize)
+                    for (int gy = 0; gy < FieldH; gy += TileSize)
                     {
-                        PointF p1 = ToIso(gx, gy);
-                        PointF p2 = ToIso(gx + tileSize, gy);
-                        PointF p3 = ToIso(gx + tileSize, gy + tileSize);
-                        PointF p4 = ToIso(gx, gy + tileSize);
-
-                        Brush b = ((gx / tileSize) + (gy / tileSize)) % 2 == 0 ? lightTile : darkTile;
+                        PointF p1 = ToIso(gx, gy); PointF p2 = ToIso(gx + TileSize, gy);
+                        PointF p3 = ToIso(gx + TileSize, gy + TileSize); PointF p4 = ToIso(gx, gy + TileSize);
+                        Brush b = ((gx / TileSize) + (gy / TileSize)) % 2 == 0 ? lightTile : darkTile;
                         g.FillPolygon(b, new[] { p1, p2, p3, p4 });
                         g.DrawPolygon(gridPen, new[] { p1, p2, p3, p4 });
                     }
@@ -488,18 +621,15 @@ namespace EnemAI
             }
 
             using (Pen borderPen = new Pen(Color.DimGray, 3))
-            {
                 g.DrawPolygon(borderPen, new[] { ToIso(0, 0), ToIso(FieldW, 0), ToIso(FieldW, FieldH), ToIso(0, FieldH) });
-            }
 
             float bobPlayer = (float)Math.Sin(tickCounter * 0.3f) * 4f;
             float bobEnemy = (float)Math.Cos(tickCounter * 0.3f) * 4f;
 
-            PointF playerBase = ToIso(playerPos.X, playerPos.Y);
             float enemyHeight = enemy.CurrentState == "ATTACKING" ? 34 : enemy.CurrentState == "ALERT" ? 24 : enemy.CurrentState == "FLEEING" ? 14 : enemy.CurrentState == "DEAD" ? 4 : 18;
             lastEnemyHeight = enemyHeight;
-            PointF enemyBase = ToIso(enemy.Position.X, enemy.Position.Y);
             Color stateColor = GetStateColor(enemy.CurrentState);
+            PointF enemyBase = ToIso(enemy.Position.X, enemy.Position.Y);
 
             if (enemy.CurrentAggro > 0 && enemy.CurrentState != "DEAD")
             {
@@ -519,64 +649,69 @@ namespace EnemAI
             DrawTrail(g, playerTrail, Color.RoyalBlue);
             DrawTrail(g, enemyTrail, stateColor);
 
-            using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
+            var renderables = new List<(float depth, Action draw)>();
+
+            foreach (var obs in GetObstacleRects())
+                renderables.Add((obs.X + obs.Y + TileSize, () => DrawIsoCube(g, obs, TileSize)));
+
+            renderables.Add((playerPos.X + playerPos.Y, () =>
             {
+                PointF pBase = ToIso(playerPos.X, playerPos.Y);
                 float pShadowScale = Math.Max(0.4f, 1f - (26 + bobPlayer) / 100f);
-                g.FillEllipse(shadowBrush, playerBase.X - (CircleSize * pShadowScale) / 2, playerBase.Y - (CircleSize * pShadowScale) / 4, CircleSize * pShadowScale, (CircleSize * pShadowScale) / 2);
+                using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
+                    g.FillEllipse(shadowBrush, pBase.X - (CircleSize * pShadowScale) / 2, pBase.Y - (CircleSize * pShadowScale) / 4, CircleSize * pShadowScale, (CircleSize * pShadowScale) / 2);
 
+                PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26 + bobPlayer);
+                using (Pen stemPen = new Pen(Color.FromArgb(120, Color.RoyalBlue), 3)) g.DrawLine(stemPen, pBase, playerTop);
+
+                g.FillEllipse(Brushes.RoyalBlue, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
+                using (Brush highlight = new SolidBrush(Color.FromArgb(90, Color.White)))
+                    g.FillEllipse(highlight, playerTop.X - CircleSize / 4, playerTop.Y - CircleSize / 3, CircleSize / 2, CircleSize / 3);
+                using (Pen outline = new Pen(Color.White, 2)) g.DrawEllipse(outline, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
+            }
+            ));
+
+            renderables.Add((enemy.Position.X + enemy.Position.Y, () =>
+            {
+                PointF eBase = ToIso(enemy.Position.X, enemy.Position.Y);
                 float eShadowScale = Math.Max(0.4f, 1f - (enemyHeight + bobEnemy) / 100f);
-                g.FillEllipse(shadowBrush, enemyBase.X - (CircleSize * eShadowScale) / 2, enemyBase.Y - (CircleSize * eShadowScale) / 4, CircleSize * eShadowScale, (CircleSize * eShadowScale) / 2);
-            }
+                using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
+                    g.FillEllipse(shadowBrush, eBase.X - (CircleSize * eShadowScale) / 2, eBase.Y - (CircleSize * eShadowScale) / 4, CircleSize * eShadowScale, (CircleSize * eShadowScale) / 2);
 
-            PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26 + bobPlayer);
-            using (Pen stemPen = new Pen(Color.FromArgb(120, Color.RoyalBlue), 3)) g.DrawLine(stemPen, playerBase, playerTop);
+                PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight + bobEnemy);
+                using (Pen stemPen = new Pen(Color.FromArgb(120, stateColor), 3)) g.DrawLine(stemPen, eBase, enemyTop);
 
-            g.FillEllipse(Brushes.RoyalBlue, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
-
-            using (Brush highlight = new SolidBrush(Color.FromArgb(90, Color.White)))
-                g.FillEllipse(highlight, playerTop.X - CircleSize / 4, playerTop.Y - CircleSize / 3, CircleSize / 2, CircleSize / 3);
-
-            using (Pen outline = new Pen(Color.White, 2)) g.DrawEllipse(outline, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
-
-            PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight + bobEnemy);
-            using (Pen stemPen = new Pen(Color.FromArgb(120, stateColor), 3)) g.DrawLine(stemPen, enemyBase, enemyTop);
-
-            RectangleF enemyRect = new RectangleF(enemyTop.X - CircleSize / 2, enemyTop.Y - CircleSize / 2, CircleSize, CircleSize);
-
-            if (enemyImage != null)
-            {
-                using (GraphicsPath path = new GraphicsPath())
+                RectangleF enemyRect = new RectangleF(enemyTop.X - CircleSize / 2, enemyTop.Y - CircleSize / 2, CircleSize, CircleSize);
+                if (enemyImage != null)
                 {
-                    path.AddEllipse(enemyRect);
-                    Region oldClip = g.Clip;
-                    g.SetClip(path);
-                    g.DrawImage(enemyImage, enemyRect);
-                    g.Clip = oldClip;
+                    using (GraphicsPath path = new GraphicsPath())
+                    {
+                        path.AddEllipse(enemyRect); Region oldClip = g.Clip; g.SetClip(path);
+                        g.DrawImage(enemyImage, enemyRect); g.Clip = oldClip;
+                    }
                 }
+                else
+                {
+                    g.FillEllipse(new SolidBrush(Color.DarkGray), enemyRect);
+                }
+                using (Pen statePen = new Pen(stateColor, 3)) g.DrawEllipse(statePen, enemyRect);
             }
-            else
-            {
-                g.FillEllipse(new SolidBrush(Color.DarkGray), enemyRect);
-            }
+            ));
 
-            using (Pen statePen = new Pen(stateColor, 3)) g.DrawEllipse(statePen, enemyRect);
+            foreach (var item in renderables.OrderBy(r => r.depth)) item.draw();
 
             if (enemy.CurrentState == "ATTACKING" || enemy.CurrentState == "FLEEING")
             {
+                PointF pTop = ToIso(playerPos.X, playerPos.Y, 26 + bobPlayer);
+                PointF eTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight + bobEnemy);
                 using (Pen targetPen = new Pen(Color.FromArgb(140, stateColor), 2) { DashStyle = DashStyle.Dash })
-                {
-                    g.DrawLine(targetPen, enemyTop, playerTop);
-                }
+                    g.DrawLine(targetPen, eTop, pTop);
             }
         }
 
         private Color GetStateColor(string state)
         {
-            return state == "DEAD" ? Color.Black
-                 : state == "ATTACKING" ? Color.Red
-                 : state == "FLEEING" ? Color.RoyalBlue
-                 : state == "ALERT" ? Color.Orange
-                 : Color.LightGray;
+            return state == "DEAD" ? Color.Black : state == "ATTACKING" ? Color.Red : state == "FLEEING" ? Color.RoyalBlue : state == "ALERT" ? Color.Orange : Color.LightGray;
         }
 
         private void DrawTrail(Graphics g, Queue<PointF> trail, Color color)
@@ -588,8 +723,7 @@ namespace EnemAI
                 int alpha = (int)(200 * ((float)i / pts.Length));
                 using (Pen p = new Pen(Color.FromArgb(alpha, color), (float)(CircleSize * 0.4)))
                 {
-                    p.StartCap = LineCap.Round;
-                    p.EndCap = LineCap.Round;
+                    p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
                     g.DrawLine(p, ToIso(pts[i].X, pts[i].Y), ToIso(pts[i + 1].X, pts[i + 1].Y));
                 }
             }
@@ -795,24 +929,13 @@ namespace EnemAI
         private Color AggroToColor(double aggro)
         {
             double t = Math.Max(0, Math.Min(100, aggro)) / 100.0;
-            if (t < 0.5)
-            {
-                double lt = t / 0.5;
-                return Interp(Color.RoyalBlue, Color.Gold, lt);
-            }
-            else
-            {
-                double lt = (t - 0.5) / 0.5;
-                return Interp(Color.Gold, Color.Crimson, lt);
-            }
+            if (t < 0.5) return Interp(Color.RoyalBlue, Color.Gold, t / 0.5);
+            else return Interp(Color.Gold, Color.Crimson, (t - 0.5) / 0.5);
         }
 
         private Color Interp(Color a, Color b, double t)
         {
-            int r = (int)(a.R + (b.R - a.R) * t);
-            int gg = (int)(a.G + (b.G - a.G) * t);
-            int bb = (int)(a.B + (b.B - a.B) * t);
-            return Color.FromArgb(r, gg, bb);
+            return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
         }
     }
 }
