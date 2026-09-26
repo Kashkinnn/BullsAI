@@ -29,8 +29,11 @@ namespace EnemAI
                 return;
             }
 
-            if (result.HealthLow > 0.0) isCommittedToAttack = false;
-            else if (result.Aggressiveness >= 75.0) isCommittedToAttack = true;
+            // Release commitment as soon as the natural fuzzy state stops being Attacking
+            if (result.State != "ATTACKING")
+                isCommittedToAttack = false;
+            else if (result.Aggressiveness >= 75.0)
+                isCommittedToAttack = true;
 
             CurrentState = isCommittedToAttack ? "ATTACKING" : result.State;
         }
