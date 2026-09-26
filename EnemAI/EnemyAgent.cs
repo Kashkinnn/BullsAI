@@ -19,14 +19,29 @@ namespace EnemAI
         private PointF facingDir = new PointF(1, 0);
         private double smoothedAggro = 0.0;
 
+        public PointF FacingDirection => facingDir;
+        public bool IsPlayerVisible { get; private set; }
+
         public void UpdateBehavior(double health, double trueDistance, PointF playerPos, List<RectangleF> obstacles, bool isManualOverride = false)
         {
             bool hasLoS = true;
             if (!isManualOverride)
             {
-                hasLoS = CheckLoS(Position, playerPos, obstacles) && InVisionCone(playerPos);
+                float dx = playerPos.X - Position.X;
+                float dy = playerPos.Y - Position.Y;
+                float distPx = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                if (distPx < 90f)
+                {
+                    hasLoS = true;
+                }
+                else
+                {
+                    hasLoS = CheckLoS(Position, playerPos, obstacles) && InVisionCone(playerPos);
+                }
             }
 
+            IsPlayerVisible = hasLoS;
             double perceivedDistance = hasLoS ? trueDistance : 51.0;
 
             FuzzyResult result = FuzzyEngine.Evaluate(health, perceivedDistance);
@@ -103,11 +118,12 @@ namespace EnemAI
                     targetDy = -dir.Y;
                     break;
                 case "ALERT":
-                    if (dist < 60f)
-                    {
-                        targetDx = -dir.X;
-                        targetDy = -dir.Y;
-                    }
+                    float standoff = 80f;
+                    float radialWeight = (standoff - dist) / standoff;
+                    radialWeight = Math.Max(-1f, Math.Min(1f, radialWeight));
+
+                    targetDx = (-dir.X * radialWeight) + (-dir.Y);
+                    targetDy = (-dir.Y * radialWeight) + (dir.X);
                     break;
             }
 

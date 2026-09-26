@@ -9,7 +9,6 @@ namespace EnemAI
 {
     public class BullsAI : Form
     {
-        private System.Windows.Forms.Timer animTimer;
         private double dispHealth = 100, dispDistance = 51, dispAggro = 0;
         private double targetHealth = 100, targetDistance = 51, targetAggro = 0;
         private const double AnimSmoothing = 0.2;
@@ -19,7 +18,10 @@ namespace EnemAI
         private Label label_EHealth, label_PDistance, enemyIcon, label_Aggro;
         private Panel field;
         private DoubleBufferedPanel designField;
-        private System.Windows.Forms.Timer demoTimer;
+
+        private System.Windows.Forms.Timer gameTimer;
+        private System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+
         private HashSet<Keys> keysDown = new HashSet<Keys>();
         private Image enemyImage;
 
@@ -50,22 +52,59 @@ namespace EnemAI
         private Queue<PointF> playerTrail = new Queue<PointF>();
         private Queue<PointF> enemyTrail = new Queue<PointF>();
         private const int MaxTrailLength = 15;
+
+        private double tickTime = 0;
         private int tickCounter = 0;
 
         private HashSet<Point> gridBlocks = new HashSet<Point>();
         private const int TileSize = 40;
 
+        private Brush lightTileBrush = new SolidBrush(Color.FromArgb(240, 245, 250));
+        private Brush darkTileBrush = new SolidBrush(Color.FromArgb(225, 230, 240));
+        private Pen gridPen = new Pen(Color.FromArgb(50, Color.SlateGray), 1);
+        private Pen borderPen = new Pen(Color.DimGray, 3);
+        private Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0));
+        private Brush highlightBrush = new SolidBrush(Color.FromArgb(90, Color.White));
+        private Pen outlinePen = new Pen(Color.White, 2);
+        private Brush pBrush = Brushes.RoyalBlue;
+        private Pen pStemPen = new Pen(Color.FromArgb(120, Color.RoyalBlue), 3);
+        private Brush blockBrush = new SolidBrush(Color.SlateGray);
+        private Brush blockLightBrush = new SolidBrush(Color.LightSlateGray);
+        private Brush blockTopBrush = new SolidBrush(Color.Silver);
+        private Pen blockPen = new Pen(Color.DimGray);
+
+        private Dictionary<string, Color> stateColors;
+        private Dictionary<string, Pen> stateStemPens;
+        private Dictionary<string, Pen> statePens;
+
         public BullsAI()
         {
             LoadEnemyResource();
+            InitializeDictionaries();
             InitializeUI();
             ResetPositions();
-            demoTimer = new System.Windows.Forms.Timer { Interval = 50 };
-            demoTimer.Tick += DemoTimer_Tick;
 
-            animTimer = new System.Windows.Forms.Timer { Interval = 20 };
-            animTimer.Tick += AnimTimer_Tick;
-            animTimer.Start();
+            sw.Start();
+            gameTimer = new System.Windows.Forms.Timer { Interval = 16 };
+            gameTimer.Tick += GameTimer_Tick;
+            gameTimer.Start();
+        }
+
+        private void InitializeDictionaries()
+        {
+            stateColors = new Dictionary<string, Color> {
+                { "DEAD", Color.Black }, { "ATTACKING", Color.Red },
+                { "FLEEING", Color.RoyalBlue }, { "ALERT", Color.Orange }, { "IDLE", Color.LightGray }
+            };
+
+            stateStemPens = new Dictionary<string, Pen>();
+            statePens = new Dictionary<string, Pen>();
+
+            foreach (var kvp in stateColors)
+            {
+                stateStemPens[kvp.Key] = new Pen(Color.FromArgb(120, kvp.Value), 3);
+                statePens[kvp.Key] = new Pen(kvp.Value, 3);
+            }
         }
 
         private void LoadEnemyResource()
@@ -148,7 +187,7 @@ namespace EnemAI
             inputGroup.Controls.AddRange(new Control[] { pSpeedLbl, trackBar_PlayerSpeed, eSpeedLbl, trackBar_EnemySpeed });
             this.Controls.Add(inputGroup);
 
-            GroupBox demoGroup = new GroupBox { Text = "Live Demo (Dynamic Camera, Click Blocks)", Location = new Point(390, 15), Size = new Size(950, 920), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            GroupBox demoGroup = new GroupBox { Text = "Live Demo (Dynamic Camera)", Location = new Point(390, 15), Size = new Size(950, 920), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
 
             field = new DoubleBufferedPanel { Location = new Point(15, 25), Size = new Size((int)FieldW, (int)FieldH), BackColor = Color.FromArgb(235, 240, 245), BorderStyle = BorderStyle.FixedSingle };
             field.TabStop = true;
@@ -167,14 +206,14 @@ namespace EnemAI
 
             FlowLayoutPanel buttons = new FlowLayoutPanel { Location = new Point(15, (int)FieldH + 35), Size = new Size((int)FieldW - 150, 50) };
             Button btnStart = new Button { Text = "Set", Size = new Size(90, 32), BackColor = Color.LightGreen, FlatStyle = FlatStyle.Flat };
-            btnStart.Click += (s, e) => { demoRunning = true; ResetPositions(); demoTimer.Start(); field.Focus(); };
+            btnStart.Click += (s, e) => { demoRunning = true; ResetPositions(); field.Focus(); };
             Button btnStop = new Button { Text = "Stop", Size = new Size(90, 32), BackColor = Color.LightCoral, FlatStyle = FlatStyle.Flat };
-            btnStop.Click += (s, e) => { demoRunning = false; demoTimer.Stop(); field.Invalidate(); };
+            btnStop.Click += (s, e) => { demoRunning = false; field.Invalidate(); };
             Button btnHit = new Button { Text = "Attack (-10 HP)", Size = new Size(130, 32) };
             btnHit.Click += (s, e) => { trackBar_EHealth.Value = Math.Max(0, trackBar_EHealth.Value - 10); UpdateAiState(true); };
             Button btnClear = new Button { Text = "Clear Blocks", Size = new Size(100, 32) };
             btnClear.Click += (s, e) => { gridBlocks.Clear(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
-            Button btnRandomEnv = new Button { Text = "Randomize", Size = new Size(100, 32) };
+            Button btnRandomEnv = new Button { Text = "Random Env", Size = new Size(100, 32) };
             btnRandomEnv.Click += (s, e) => { GenerateEnvironment(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
 
             buttons.Controls.AddRange(new Control[] { btnStart, btnStop, btnHit, btnClear, btnRandomEnv });
@@ -359,7 +398,7 @@ namespace EnemAI
             targetAggro = enemy.CurrentAggro;
 
             outputGraph.Curve = enemy.LastResult.Curve ?? new List<(double, double)>();
-            RefreshRuleGrid();
+            RefreshRuleGridThrottled();
 
             switch (enemy.CurrentState)
             {
@@ -371,35 +410,33 @@ namespace EnemAI
             }
         }
 
-        private void AnimTimer_Tick(object sender, EventArgs e)
+        private void RefreshRuleGridThrottled()
         {
-            dispHealth += (targetHealth - dispHealth) * AnimSmoothing;
-            dispDistance += (targetDistance - dispDistance) * AnimSmoothing;
-            dispAggro += (targetAggro - dispAggro) * AnimSmoothing;
-
-            healthGraph.CurrentValue = dispHealth;
-            distanceGraph.CurrentValue = dispDistance;
-            outputGraph.Centroid = dispAggro;
-            surfacePanel.MarkerHealth = dispHealth;
-            surfacePanel.MarkerDistance = dispDistance;
-
-            healthGraph.Invalidate(); distanceGraph.Invalidate(); outputGraph.Invalidate(); surfacePanel.Invalidate();
-        }
-
-        private void RefreshRuleGrid()
-        {
-            ruleGrid.Rows.Clear();
             var rules = enemy.LastResult.Rules;
             if (rules == null || rules.Count == 0) return;
 
             var sortedRules = rules.OrderBy(kv => kv.Key).ToList();
-            foreach (var kv in sortedRules)
+            if (ruleGrid.Rows.Count != sortedRules.Count)
             {
-                int rowIdx = ruleGrid.Rows.Add(kv.Key, kv.Value.healthSet, kv.Value.distSet, kv.Value.output, kv.Value.strength.ToString("F2"));
-                if (kv.Value.strength > 0.0)
+                ruleGrid.Rows.Clear();
+                foreach (var kv in sortedRules)
                 {
-                    ruleGrid.Rows[rowIdx].DefaultCellStyle.BackColor = Color.LightYellow;
-                    ruleGrid.Rows[rowIdx].DefaultCellStyle.Font = new Font(ruleGrid.Font, FontStyle.Bold);
+                    ruleGrid.Rows.Add(kv.Key, kv.Value.healthSet, kv.Value.distSet, kv.Value.output, kv.Value.strength.ToString("F2"));
+                }
+            }
+
+            for (int i = 0; i < sortedRules.Count; i++)
+            {
+                ruleGrid.Rows[i].Cells[4].Value = sortedRules[i].Value.strength.ToString("F2");
+                if (sortedRules[i].Value.strength > 0.0)
+                {
+                    ruleGrid.Rows[i].DefaultCellStyle.BackColor = Color.LightYellow;
+                    ruleGrid.Rows[i].DefaultCellStyle.Font = new Font(ruleGrid.Font, FontStyle.Bold);
+                }
+                else
+                {
+                    ruleGrid.Rows[i].DefaultCellStyle.BackColor = Color.White;
+                    ruleGrid.Rows[i].DefaultCellStyle.Font = new Font(ruleGrid.Font, FontStyle.Regular);
                 }
             }
         }
@@ -412,48 +449,69 @@ namespace EnemAI
             return false;
         }
 
-        private void DemoTimer_Tick(object sender, EventArgs e)
+        private void GameTimer_Tick(object sender, EventArgs e)
         {
-            tickCounter++;
+            double dt = sw.Elapsed.TotalSeconds;
+            sw.Restart();
+            if (dt > 0.1) dt = 0.1;
 
-            float targetCamX = (FieldW / 2f) - playerPos.X;
-            float targetCamY = (FieldH / 2f) - playerPos.Y;
-            camOffsetX += (targetCamX - camOffsetX) * 0.1f;
-            camOffsetY += (targetCamY - camOffsetY) * 0.1f;
+            tickTime += dt;
+            tickCounter = (int)(tickTime * 60);
 
-            if (!isDraggingPlayer)
+            dispHealth += (targetHealth - dispHealth) * AnimSmoothing * (dt * 50.0);
+            dispDistance += (targetDistance - dispDistance) * AnimSmoothing * (dt * 50.0);
+            dispAggro += (targetAggro - dispAggro) * AnimSmoothing * (dt * 50.0);
+
+            healthGraph.CurrentValue = dispHealth;
+            distanceGraph.CurrentValue = dispDistance;
+            outputGraph.Centroid = dispAggro;
+            surfacePanel.MarkerHealth = dispHealth;
+            surfacePanel.MarkerDistance = dispDistance;
+
+            healthGraph.Invalidate(); distanceGraph.Invalidate(); outputGraph.Invalidate(); surfacePanel.Invalidate();
+
+            if (demoRunning)
             {
-                float dx = 0, dy = 0;
-                if (keysDown.Contains(Keys.W)) dy -= 1;
-                if (keysDown.Contains(Keys.S)) dy += 1;
-                if (keysDown.Contains(Keys.A)) dx -= 1;
-                if (keysDown.Contains(Keys.D)) dx += 1;
+                float targetCamX = (FieldW / 2f) - playerPos.X;
+                float targetCamY = (FieldH / 2f) - playerPos.Y;
+                camOffsetX += (targetCamX - camOffsetX) * (float)(dt * 5.0);
+                camOffsetY += (targetCamY - camOffsetY) * (float)(dt * 5.0);
 
-                if (dx != 0 || dy != 0)
+                if (!isDraggingPlayer)
                 {
-                    float len = (float)Math.Sqrt(dx * dx + dy * dy);
-                    float mx = (dx / len) * playerSpeed;
-                    float my = (dy / len) * playerSpeed;
+                    float dx = 0, dy = 0;
+                    if (keysDown.Contains(Keys.W)) dy -= 1;
+                    if (keysDown.Contains(Keys.S)) dy += 1;
+                    if (keysDown.Contains(Keys.A)) dx -= 1;
+                    if (keysDown.Contains(Keys.D)) dx += 1;
 
-                    if (!IsColliding(playerPos.X + mx, playerPos.Y)) playerPos.X = Math.Max(0, Math.Min(FieldW - CircleSize, playerPos.X + mx));
-                    if (!IsColliding(playerPos.X, playerPos.Y + my)) playerPos.Y = Math.Max(0, Math.Min(FieldH - CircleSize, playerPos.Y + my));
+                    if (dx != 0 || dy != 0)
+                    {
+                        float len = (float)Math.Sqrt(dx * dx + dy * dy);
+                        float step = (float)(playerSpeed * dt * 20f);
+                        float mx = (dx / len) * step;
+                        float my = (dy / len) * step;
+
+                        if (!IsColliding(playerPos.X + mx, playerPos.Y)) playerPos.X = Math.Max(0, Math.Min(FieldW - CircleSize, playerPos.X + mx));
+                        if (!IsColliding(playerPos.X, playerPos.Y + my)) playerPos.Y = Math.Max(0, Math.Min(FieldH - CircleSize, playerPos.Y + my));
+                    }
                 }
+
+                double distPx = Math.Sqrt(Math.Pow(playerPos.X - enemy.Position.X, 2) + Math.Pow(playerPos.Y - enemy.Position.Y, 2));
+                double diagonal = Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
+                trackBar_PDistance.Value = Math.Max(1, Math.Min(51, (int)(distPx / diagonal * 51)));
+
+                UpdateAiState(false);
+
+                if (!isDraggingEnemy)
+                    enemy.Move(playerPos, (float)(enemySpeed * dt * 20f), (float)dt, FieldW, FieldH, CircleSize, GetObstacleRects());
+
+                playerTrail.Enqueue(new PointF(playerPos.X, playerPos.Y));
+                if (playerTrail.Count > MaxTrailLength) playerTrail.Dequeue();
+
+                enemyTrail.Enqueue(new PointF(enemy.Position.X, enemy.Position.Y));
+                if (enemyTrail.Count > MaxTrailLength) enemyTrail.Dequeue();
             }
-
-            double distPx = Math.Sqrt(Math.Pow(playerPos.X - enemy.Position.X, 2) + Math.Pow(playerPos.Y - enemy.Position.Y, 2));
-            double diagonal = Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
-            trackBar_PDistance.Value = Math.Max(1, Math.Min(51, (int)(distPx / diagonal * 51)));
-
-            UpdateAiState(false);
-
-            if (!isDraggingEnemy)
-                enemy.Move(playerPos, enemySpeed, 0.05f, FieldW, FieldH, CircleSize, GetObstacleRects());
-
-            playerTrail.Enqueue(new PointF(playerPos.X, playerPos.Y));
-            if (playerTrail.Count > MaxTrailLength) playerTrail.Dequeue();
-
-            enemyTrail.Enqueue(new PointF(enemy.Position.X, enemy.Position.Y));
-            if (enemyTrail.Count > MaxTrailLength) enemyTrail.Dequeue();
 
             if (isDesignMode) designField.Invalidate();
             else field.Invalidate();
@@ -501,13 +559,11 @@ namespace EnemAI
                 PointF world = FromIso(e.Location, 26);
                 playerPos.X = Math.Max(0, Math.Min(FieldW - CircleSize, world.X));
                 playerPos.Y = Math.Max(0, Math.Min(FieldH - CircleSize, world.Y));
-                field.Invalidate();
             }
             else if (isDraggingEnemy)
             {
                 PointF world = FromIso(e.Location, lastEnemyHeight);
                 enemy.Position = new PointF(Math.Max(0, Math.Min(FieldW - CircleSize, world.X)), Math.Max(0, Math.Min(FieldH - CircleSize, world.Y)));
-                field.Invalidate();
             }
         }
 
@@ -539,7 +595,6 @@ namespace EnemAI
                     Point gridPt = new Point(tx, ty);
                     if (e.Button == MouseButtons.Left) gridBlocks.Add(gridPt);
                     else if (e.Button == MouseButtons.Right) gridBlocks.Remove(gridPt);
-                    designField.Invalidate();
                 }
             }
         }
@@ -549,13 +604,12 @@ namespace EnemAI
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            using (Pen gridPen = new Pen(Color.FromArgb(80, 100, 100, 100), 1))
+            using (Pen gridLinePen = new Pen(Color.FromArgb(80, 100, 100, 100), 1))
             {
-                for (int x = 0; x <= FieldW; x += TileSize) g.DrawLine(gridPen, x, 0, x, FieldH);
-                for (int y = 0; y <= FieldH; y += TileSize) g.DrawLine(gridPen, 0, y, FieldW, y);
+                for (int x = 0; x <= FieldW; x += TileSize) g.DrawLine(gridLinePen, x, 0, x, FieldH);
+                for (int y = 0; y <= FieldH; y += TileSize) g.DrawLine(gridLinePen, 0, y, FieldW, y);
             }
 
-            using (Brush blockBrush = new SolidBrush(Color.SlateGray))
             using (Pen blockBorder = new Pen(Color.Black, 1))
             {
                 foreach (var b in gridBlocks)
@@ -565,12 +619,49 @@ namespace EnemAI
                 }
             }
 
-            g.FillEllipse(Brushes.RoyalBlue, playerPos.X, playerPos.Y, CircleSize, CircleSize);
+            float angleRad = (float)Math.Atan2(enemy.FacingDirection.Y, enemy.FacingDirection.X);
+            float angleDeg = angleRad * (180f / (float)Math.PI);
+            float coneRadius = 150f;
+            Color coneColor = enemy.IsPlayerVisible ? Color.FromArgb(80, Color.LimeGreen) : Color.FromArgb(80, Color.Crimson);
+
+            using (SolidBrush coneBrush = new SolidBrush(coneColor))
+            {
+                g.FillPie(coneBrush, enemy.Position.X + CircleSize / 2 - coneRadius, enemy.Position.Y + CircleSize / 2 - coneRadius, coneRadius * 2, coneRadius * 2, angleDeg - 60f, 120f);
+            }
+            using (Pen rayPen = new Pen(coneColor, 2) { DashStyle = DashStyle.Dash })
+            {
+                g.DrawLine(rayPen, enemy.Position.X + CircleSize / 2, enemy.Position.Y + CircleSize / 2,
+                           enemy.Position.X + CircleSize / 2 + enemy.FacingDirection.X * coneRadius,
+                           enemy.Position.Y + CircleSize / 2 + enemy.FacingDirection.Y * coneRadius);
+            }
+
+            g.FillEllipse(pBrush, playerPos.X, playerPos.Y, CircleSize, CircleSize);
             g.DrawString("P", new Font("Arial", 10, FontStyle.Bold), Brushes.White, playerPos.X + 8, playerPos.Y + 8);
 
-            Color stateColor = GetStateColor(enemy.CurrentState);
-            g.FillEllipse(new SolidBrush(stateColor), enemy.Position.X, enemy.Position.Y, CircleSize, CircleSize);
-            g.DrawString("E", new Font("Arial", 10, FontStyle.Bold), Brushes.White, enemy.Position.X + 8, enemy.Position.Y + 8);
+            RectangleF enemyRect = new RectangleF(enemy.Position.X, enemy.Position.Y, CircleSize, CircleSize);
+            Color stateColor = stateColors.ContainsKey(enemy.CurrentState) ? stateColors[enemy.CurrentState] : Color.LightGray;
+
+            if (enemyImage != null)
+            {
+                using (GraphicsPath path = new GraphicsPath())
+                {
+                    path.AddEllipse(enemyRect);
+                    Region oldClip = g.Clip;
+                    g.SetClip(path);
+                    g.DrawImage(enemyImage, enemyRect);
+                    g.Clip = oldClip;
+                }
+            }
+            else
+            {
+                g.FillEllipse(new SolidBrush(stateColor), enemyRect);
+                g.DrawString("E", new Font("Arial", 10, FontStyle.Bold), Brushes.White, enemy.Position.X + 8, enemy.Position.Y + 8);
+            }
+
+            if (statePens.ContainsKey(enemy.CurrentState))
+            {
+                g.DrawEllipse(statePens[enemy.CurrentState], enemyRect);
+            }
         }
 
         private void DrawIsoCube(Graphics g, RectangleF rect, float height)
@@ -584,16 +675,13 @@ namespace EnemAI
             PointF t3 = ToIso(rect.Right, rect.Bottom, height);
             PointF t4 = ToIso(rect.X, rect.Bottom, height);
 
-            using (Brush b = new SolidBrush(Color.SlateGray)) g.FillPolygon(b, new[] { p4, p3, t3, t4 });
-            using (Brush b = new SolidBrush(Color.LightSlateGray)) g.FillPolygon(b, new[] { p2, p3, t3, t2 });
-            using (Brush b = new SolidBrush(Color.Silver)) g.FillPolygon(b, new[] { t1, t2, t3, t4 });
+            g.FillPolygon(blockBrush, new[] { p4, p3, t3, t4 });
+            g.FillPolygon(blockLightBrush, new[] { p2, p3, t3, t2 });
+            g.FillPolygon(blockTopBrush, new[] { t1, t2, t3, t4 });
 
-            using (Pen p = new Pen(Color.DimGray))
-            {
-                g.DrawPolygon(p, new[] { t1, t2, t3, t4 });
-                g.DrawLine(p, p4, t4); g.DrawLine(p, p3, t3); g.DrawLine(p, p2, t2);
-                g.DrawLine(p, p4, p3); g.DrawLine(p, p2, p3);
-            }
+            g.DrawPolygon(blockPen, new[] { t1, t2, t3, t4 });
+            g.DrawLine(blockPen, p4, t4); g.DrawLine(blockPen, p3, t3); g.DrawLine(blockPen, p2, t2);
+            g.DrawLine(blockPen, p4, p3); g.DrawLine(blockPen, p2, p3);
         }
 
         private void Field_Paint(object sender, PaintEventArgs e)
@@ -603,32 +691,26 @@ namespace EnemAI
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            using (Brush lightTile = new SolidBrush(Color.FromArgb(240, 245, 250)))
-            using (Brush darkTile = new SolidBrush(Color.FromArgb(225, 230, 240)))
-            using (Pen gridPen = new Pen(Color.FromArgb(50, Color.SlateGray), 1))
+            for (int gx = 0; gx < FieldW; gx += TileSize)
             {
-                for (int gx = 0; gx < FieldW; gx += TileSize)
+                for (int gy = 0; gy < FieldH; gy += TileSize)
                 {
-                    for (int gy = 0; gy < FieldH; gy += TileSize)
-                    {
-                        PointF p1 = ToIso(gx, gy); PointF p2 = ToIso(gx + TileSize, gy);
-                        PointF p3 = ToIso(gx + TileSize, gy + TileSize); PointF p4 = ToIso(gx, gy + TileSize);
-                        Brush b = ((gx / TileSize) + (gy / TileSize)) % 2 == 0 ? lightTile : darkTile;
-                        g.FillPolygon(b, new[] { p1, p2, p3, p4 });
-                        g.DrawPolygon(gridPen, new[] { p1, p2, p3, p4 });
-                    }
+                    PointF p1 = ToIso(gx, gy); PointF p2 = ToIso(gx + TileSize, gy);
+                    PointF p3 = ToIso(gx + TileSize, gy + TileSize); PointF p4 = ToIso(gx, gy + TileSize);
+                    Brush b = ((gx / TileSize) + (gy / TileSize)) % 2 == 0 ? lightTileBrush : darkTileBrush;
+                    g.FillPolygon(b, new[] { p1, p2, p3, p4 });
+                    g.DrawPolygon(gridPen, new[] { p1, p2, p3, p4 });
                 }
             }
 
-            using (Pen borderPen = new Pen(Color.DimGray, 3))
-                g.DrawPolygon(borderPen, new[] { ToIso(0, 0), ToIso(FieldW, 0), ToIso(FieldW, FieldH), ToIso(0, FieldH) });
+            g.DrawPolygon(borderPen, new[] { ToIso(0, 0), ToIso(FieldW, 0), ToIso(FieldW, FieldH), ToIso(0, FieldH) });
 
-            float bobPlayer = (float)Math.Sin(tickCounter * 0.3f) * 4f;
-            float bobEnemy = (float)Math.Cos(tickCounter * 0.3f) * 4f;
+            float bobPlayer = (float)Math.Sin(tickTime * 6f) * 4f;
+            float bobEnemy = (float)Math.Cos(tickTime * 6f) * 4f;
 
             float enemyHeight = enemy.CurrentState == "ATTACKING" ? 34 : enemy.CurrentState == "ALERT" ? 24 : enemy.CurrentState == "FLEEING" ? 14 : enemy.CurrentState == "DEAD" ? 4 : 18;
             lastEnemyHeight = enemyHeight;
-            Color stateColor = GetStateColor(enemy.CurrentState);
+            Color stateColor = stateColors.ContainsKey(enemy.CurrentState) ? stateColors[enemy.CurrentState] : Color.LightGray;
             PointF enemyBase = ToIso(enemy.Position.X, enemy.Position.Y);
 
             if (enemy.CurrentAggro > 0 && enemy.CurrentState != "DEAD")
@@ -646,6 +728,33 @@ namespace EnemAI
                 }
             }
 
+            float angleRad = (float)Math.Atan2(enemy.FacingDirection.Y, enemy.FacingDirection.X);
+            float coneRadius = 150f;
+            Color coneColor = enemy.IsPlayerVisible ? Color.FromArgb(80, Color.LimeGreen) : Color.FromArgb(80, Color.Crimson);
+            List<PointF> conePoints = new List<PointF>();
+            PointF eCenterWorld = new PointF(enemy.Position.X + CircleSize / 2, enemy.Position.Y + CircleSize / 2);
+            conePoints.Add(ToIso(eCenterWorld.X, eCenterWorld.Y));
+
+            int segments = 12;
+            float startAngle = angleRad - (float)(Math.PI / 3);
+            float stepAngle = (float)(Math.PI * 2 / 3) / segments;
+
+            for (int i = 0; i <= segments; i++)
+            {
+                float a = startAngle + stepAngle * i;
+                conePoints.Add(ToIso(eCenterWorld.X + (float)Math.Cos(a) * coneRadius, eCenterWorld.Y + (float)Math.Sin(a) * coneRadius));
+            }
+
+            using (SolidBrush coneBrush = new SolidBrush(coneColor))
+            {
+                g.FillPolygon(coneBrush, conePoints.ToArray());
+            }
+
+            using (Pen rayPen = new Pen(coneColor, 2) { DashStyle = DashStyle.Dash })
+            {
+                g.DrawLine(rayPen, ToIso(eCenterWorld.X, eCenterWorld.Y), ToIso(eCenterWorld.X + enemy.FacingDirection.X * coneRadius, eCenterWorld.Y + enemy.FacingDirection.Y * coneRadius));
+            }
+
             DrawTrail(g, playerTrail, Color.RoyalBlue);
             DrawTrail(g, enemyTrail, stateColor);
 
@@ -658,16 +767,14 @@ namespace EnemAI
             {
                 PointF pBase = ToIso(playerPos.X, playerPos.Y);
                 float pShadowScale = Math.Max(0.4f, 1f - (26 + bobPlayer) / 100f);
-                using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
-                    g.FillEllipse(shadowBrush, pBase.X - (CircleSize * pShadowScale) / 2, pBase.Y - (CircleSize * pShadowScale) / 4, CircleSize * pShadowScale, (CircleSize * pShadowScale) / 2);
+                g.FillEllipse(shadowBrush, pBase.X - (CircleSize * pShadowScale) / 2, pBase.Y - (CircleSize * pShadowScale) / 4, CircleSize * pShadowScale, (CircleSize * pShadowScale) / 2);
 
                 PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26 + bobPlayer);
-                using (Pen stemPen = new Pen(Color.FromArgb(120, Color.RoyalBlue), 3)) g.DrawLine(stemPen, pBase, playerTop);
+                g.DrawLine(pStemPen, pBase, playerTop);
 
-                g.FillEllipse(Brushes.RoyalBlue, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
-                using (Brush highlight = new SolidBrush(Color.FromArgb(90, Color.White)))
-                    g.FillEllipse(highlight, playerTop.X - CircleSize / 4, playerTop.Y - CircleSize / 3, CircleSize / 2, CircleSize / 3);
-                using (Pen outline = new Pen(Color.White, 2)) g.DrawEllipse(outline, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
+                g.FillEllipse(pBrush, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
+                g.FillEllipse(highlightBrush, playerTop.X - CircleSize / 4, playerTop.Y - CircleSize / 3, CircleSize / 2, CircleSize / 3);
+                g.DrawEllipse(outlinePen, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
             }
             ));
 
@@ -675,11 +782,10 @@ namespace EnemAI
             {
                 PointF eBase = ToIso(enemy.Position.X, enemy.Position.Y);
                 float eShadowScale = Math.Max(0.4f, 1f - (enemyHeight + bobEnemy) / 100f);
-                using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
-                    g.FillEllipse(shadowBrush, eBase.X - (CircleSize * eShadowScale) / 2, eBase.Y - (CircleSize * eShadowScale) / 4, CircleSize * eShadowScale, (CircleSize * eShadowScale) / 2);
+                g.FillEllipse(shadowBrush, eBase.X - (CircleSize * eShadowScale) / 2, eBase.Y - (CircleSize * eShadowScale) / 4, CircleSize * eShadowScale, (CircleSize * eShadowScale) / 2);
 
                 PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight + bobEnemy);
-                using (Pen stemPen = new Pen(Color.FromArgb(120, stateColor), 3)) g.DrawLine(stemPen, eBase, enemyTop);
+                if (stateStemPens.ContainsKey(enemy.CurrentState)) g.DrawLine(stateStemPens[enemy.CurrentState], eBase, enemyTop);
 
                 RectangleF enemyRect = new RectangleF(enemyTop.X - CircleSize / 2, enemyTop.Y - CircleSize / 2, CircleSize, CircleSize);
                 if (enemyImage != null)
@@ -694,7 +800,7 @@ namespace EnemAI
                 {
                     g.FillEllipse(new SolidBrush(Color.DarkGray), enemyRect);
                 }
-                using (Pen statePen = new Pen(stateColor, 3)) g.DrawEllipse(statePen, enemyRect);
+                if (statePens.ContainsKey(enemy.CurrentState)) g.DrawEllipse(statePens[enemy.CurrentState], enemyRect);
             }
             ));
 
@@ -707,11 +813,6 @@ namespace EnemAI
                 using (Pen targetPen = new Pen(Color.FromArgb(140, stateColor), 2) { DashStyle = DashStyle.Dash })
                     g.DrawLine(targetPen, eTop, pTop);
             }
-        }
-
-        private Color GetStateColor(string state)
-        {
-            return state == "DEAD" ? Color.Black : state == "ATTACKING" ? Color.Red : state == "FLEEING" ? Color.RoyalBlue : state == "ALERT" ? Color.Orange : Color.LightGray;
         }
 
         private void DrawTrail(Graphics g, Queue<PointF> trail, Color color)
