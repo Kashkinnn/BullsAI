@@ -18,6 +18,7 @@ namespace EnemAI
 
         private PointF facingDir = new PointF(1, 0);
         private double smoothedAggro = 0.0;
+        private double memoryDistance = 51.0;
 
         public PointF FacingDirection => facingDir;
         public bool IsPlayerVisible { get; private set; }
@@ -37,12 +38,23 @@ namespace EnemAI
                 }
                 else
                 {
-                    hasLoS = CheckLoS(Position, playerPos, obstacles) && InVisionCone(playerPos);
+                    bool inCone = InVisionCone(playerPos) || CurrentState == "FLEEING";
+                    hasLoS = CheckLoS(Position, playerPos, obstacles) && inCone;
                 }
             }
 
             IsPlayerVisible = hasLoS;
-            double perceivedDistance = hasLoS ? trueDistance : 51.0;
+
+            if (hasLoS || isManualOverride)
+            {
+                memoryDistance = trueDistance;
+            }
+            else
+            {
+                memoryDistance = Math.Min(51.0, memoryDistance + 0.3);
+            }
+
+            double perceivedDistance = memoryDistance;
 
             FuzzyResult result = FuzzyEngine.Evaluate(health, perceivedDistance);
             LastResult = result;
@@ -134,9 +146,12 @@ namespace EnemAI
             float mLen = (float)Math.Sqrt(finalDx * finalDx + finalDy * finalDy);
             if (mLen > 0.01f)
             {
-                finalDx = (finalDx / mLen) * speed;
-                finalDy = (finalDy / mLen) * speed;
-                facingDir = new PointF(finalDx / speed, finalDy / speed);
+                // Corrected normalization logic prevents NaN crashes when speed == 0
+                float normX = finalDx / mLen;
+                float normY = finalDy / mLen;
+                facingDir = new PointF(normX, normY);
+                finalDx = normX * speed;
+                finalDy = normY * speed;
             }
             else
             {

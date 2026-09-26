@@ -48,6 +48,13 @@ namespace EnemAI
 
         private float camOffsetX = 0f;
         private float camOffsetY = 0f;
+        private enum CameraMode { Manual, FollowPlayer, FollowEnemy }
+        private CameraMode cameraMode = CameraMode.FollowPlayer;
+        private float manualCamOffsetX = 0f;
+        private float manualCamOffsetY = 0f;
+        private bool isPanningCamera = false;
+        private Point lastPanMouse;
+        private ComboBox cameraModeSelector;
 
         private Queue<PointF> playerTrail = new Queue<PointF>();
         private Queue<PointF> enemyTrail = new Queue<PointF>();
@@ -115,6 +122,8 @@ namespace EnemAI
 
         private void InitializeUI()
         {
+            // Forces exactly 100% pixel mapping, solving all DPI tearing
+            this.AutoScaleMode = AutoScaleMode.None;
             this.Text = "BullsAi";
             this.Size = new Size(1850, 980);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -181,7 +190,7 @@ namespace EnemAI
             trackBar_PlayerSpeed.Scroll += (s, e) => { playerSpeed = trackBar_PlayerSpeed.Value; };
 
             Label eSpeedLbl = new Label { Text = "Enemy Speed", Location = new Point(15, 535), AutoSize = true };
-            trackBar_EnemySpeed = new TrackBar { Minimum = 1, Maximum = 10, Value = 2, Location = new Point(15, 555), Width = 320 };
+            trackBar_EnemySpeed = new TrackBar { Minimum = 0, Maximum = 10, Value = 2, Location = new Point(15, 555), Width = 320 };
             trackBar_EnemySpeed.Scroll += (s, e) => { enemySpeed = trackBar_EnemySpeed.Value; };
 
             inputGroup.Controls.AddRange(new Control[] { pSpeedLbl, trackBar_PlayerSpeed, eSpeedLbl, trackBar_EnemySpeed });
@@ -193,8 +202,11 @@ namespace EnemAI
             field.TabStop = true;
             field.Paint += Field_Paint;
             field.MouseDown += Field_MouseDown;
+            field.MouseDown += Field_CameraPanDown;
             field.MouseMove += Field_MouseMove;
+            field.MouseMove += Field_CameraPanMove;
             field.MouseUp += Field_MouseUp;
+            field.MouseUp += Field_CameraPanUp;
             demoGroup.Controls.Add(field);
 
             designField = new DoubleBufferedPanel { Location = new Point(15, 25), Size = new Size((int)FieldW, (int)FieldH), BackColor = Color.FromArgb(30, 35, 40), BorderStyle = BorderStyle.FixedSingle, Visible = false };
@@ -204,24 +216,71 @@ namespace EnemAI
             designField.MouseMove += DesignField_MouseMove;
             demoGroup.Controls.Add(designField);
 
-            FlowLayoutPanel buttons = new FlowLayoutPanel { Location = new Point(15, (int)FieldH + 35), Size = new Size((int)FieldW - 150, 50) };
+            FlowLayoutPanel buttons = new FlowLayoutPanel
+            {
+                Location = new Point(15, (int)FieldH + 35),
+                Size = new Size(585, 45),
+                WrapContents = false
+            };
             Button btnStart = new Button { Text = "Set", Size = new Size(90, 32), BackColor = Color.LightGreen, FlatStyle = FlatStyle.Flat };
             btnStart.Click += (s, e) => { demoRunning = true; ResetPositions(); field.Focus(); };
             Button btnStop = new Button { Text = "Stop", Size = new Size(90, 32), BackColor = Color.LightCoral, FlatStyle = FlatStyle.Flat };
             btnStop.Click += (s, e) => { demoRunning = false; field.Invalidate(); };
-            Button btnHit = new Button { Text = "Attack (-10 HP)", Size = new Size(130, 32) };
+            Button btnHit = new Button { Text = "Attack (-10 HP)", Size = new Size(140, 32) };
             btnHit.Click += (s, e) => { trackBar_EHealth.Value = Math.Max(0, trackBar_EHealth.Value - 10); UpdateAiState(true); };
-            Button btnClear = new Button { Text = "Clear Blocks", Size = new Size(100, 32) };
+            Button btnClear = new Button { Text = "Clear Blocks", Size = new Size(115, 32) };
             btnClear.Click += (s, e) => { gridBlocks.Clear(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
-            Button btnRandomEnv = new Button { Text = "Random Env", Size = new Size(100, 32) };
+            Button btnRandomEnv = new Button { Text = "Random Env", Size = new Size(115, 32) };
             btnRandomEnv.Click += (s, e) => { GenerateEnvironment(); field.Invalidate(); designField.Invalidate(); field.Focus(); };
 
             buttons.Controls.AddRange(new Control[] { btnStart, btnStop, btnHit, btnClear, btnRandomEnv });
             demoGroup.Controls.Add(buttons);
 
-            btnDesignEnv = new Button { Text = "2D", Size = new Size(135, 32), Location = new Point((int)FieldW - 120, (int)FieldH + 35), BackColor = Color.LightSkyBlue, FlatStyle = FlatStyle.Flat };
+            Label camLabel = new Label
+            {
+                Text = "Camera:",
+                Location = new Point(600, (int)FieldH + 41),
+                Size = new Size(60, 20),
+                Font = new Font("Segoe UI", 9f),
+                TextAlign = ContentAlignment.MiddleRight
+            };
+            demoGroup.Controls.Add(camLabel);
+
+            cameraModeSelector = new ComboBox
+            {
+                Location = new Point(665, (int)FieldH + 38),
+                Size = new Size(130, 26),
+                Font = new Font("Segoe UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cameraModeSelector.Items.AddRange(new object[] { "Follow Player", "Follow Enemy", "Manual" });
+            cameraModeSelector.SelectedIndex = 0;
+            cameraModeSelector.SelectedIndexChanged += (s, e) =>
+            {
+                switch (cameraModeSelector.SelectedIndex)
+                {
+                    case 0: cameraMode = CameraMode.FollowPlayer; break;
+                    case 1: cameraMode = CameraMode.FollowEnemy; break;
+                    case 2: cameraMode = CameraMode.Manual; manualCamOffsetX = camOffsetX; manualCamOffsetY = camOffsetY; break;
+                }
+                field.Focus();
+            };
+            demoGroup.Controls.Add(cameraModeSelector);
+
+            btnDesignEnv = new Button
+            {
+                Text = "2D",
+                Size = new Size(100, 32),
+                Location = new Point(835, (int)FieldH + 35),
+                BackColor = Color.LightSkyBlue,
+                FlatStyle = FlatStyle.Flat
+            };
             btnDesignEnv.Click += (s, e) => ToggleDesignMode();
             demoGroup.Controls.Add(btnDesignEnv);
+
+            camLabel.BringToFront();
+            cameraModeSelector.BringToFront();
+            btnDesignEnv.BringToFront();
 
             this.Controls.Add(demoGroup);
 
@@ -302,6 +361,30 @@ namespace EnemAI
                 field.Visible = true;
                 field.Invalidate();
             }
+        }
+
+        private void Field_CameraPanDown(object sender, MouseEventArgs e)
+        {
+            if (cameraMode != CameraMode.Manual) return;
+            if (isDraggingPlayer || isDraggingEnemy) return;
+            isPanningCamera = true;
+            lastPanMouse = e.Location;
+        }
+
+        private void Field_CameraPanMove(object sender, MouseEventArgs e)
+        {
+            if (!isPanningCamera) return;
+            int dx = e.X - lastPanMouse.X;
+            int dy = e.Y - lastPanMouse.Y;
+            manualCamOffsetX += dx;
+            manualCamOffsetY += dy;
+            lastPanMouse = e.Location;
+            field.Invalidate();
+        }
+
+        private void Field_CameraPanUp(object sender, MouseEventArgs e)
+        {
+            isPanningCamera = false;
         }
 
         private void GenerateEnvironment()
@@ -472,10 +555,19 @@ namespace EnemAI
 
             if (demoRunning)
             {
-                float targetCamX = (FieldW / 2f) - playerPos.X;
-                float targetCamY = (FieldH / 2f) - playerPos.Y;
-                camOffsetX += (targetCamX - camOffsetX) * (float)(dt * 5.0);
-                camOffsetY += (targetCamY - camOffsetY) * (float)(dt * 5.0);
+                if (cameraMode == CameraMode.Manual)
+                {
+                    camOffsetX = manualCamOffsetX;
+                    camOffsetY = manualCamOffsetY;
+                }
+                else
+                {
+                    PointF followTarget = cameraMode == CameraMode.FollowEnemy ? enemy.Position : playerPos;
+                    float targetCamX = (FieldW / 2f) - followTarget.X;
+                    float targetCamY = (FieldH / 2f) - followTarget.Y;
+                    camOffsetX += (targetCamX - camOffsetX) * (float)(dt * 5.0);
+                    camOffsetY += (targetCamY - camOffsetY) * (float)(dt * 5.0);
+                }
 
                 if (!isDraggingPlayer)
                 {
@@ -524,6 +616,108 @@ namespace EnemAI
             float isoX = (x - y) * IsoScaleX;
             float isoY = (x + y) * IsoScaleY - z;
             return new PointF(isoX + FieldW / 2.2f, isoY + 70);
+        }
+
+        private Color GetZoneColor(double distanceMeters)
+        {
+            var r = FuzzyEngine.Evaluate(100, distanceMeters);
+            double total = r.DistanceNear + r.DistanceMed + r.DistanceFar;
+            if (total <= 0.0001) total = 1;
+            int cr = (int)((235 * r.DistanceNear + 235 * r.DistanceMed + 150 * r.DistanceFar) / total);
+            int cg = (int)((60 * r.DistanceNear + 190 * r.DistanceMed + 150 * r.DistanceFar) / total);
+            int cb = (int)((60 * r.DistanceNear + 40 * r.DistanceMed + 150 * r.DistanceFar) / total);
+            cr = Math.Max(0, Math.Min(255, cr));
+            cg = Math.Max(0, Math.Min(255, cg));
+            cb = Math.Max(0, Math.Min(255, cb));
+            return Color.FromArgb(85, cr, cg, cb);
+        }
+
+        private float? RayIntersectRect(PointF origin, PointF dir, RectangleF rect)
+        {
+            float tmin = 0f, tmax = float.MaxValue;
+            float[] originArr = { origin.X, origin.Y };
+            float[] dirArr = { dir.X, dir.Y };
+            float[] minArr = { rect.Left, rect.Top };
+            float[] maxArr = { rect.Right, rect.Bottom };
+
+            for (int i = 0; i < 2; i++)
+            {
+                if (Math.Abs(dirArr[i]) < 1e-6f)
+                {
+                    if (originArr[i] < minArr[i] || originArr[i] > maxArr[i]) return null;
+                }
+                else
+                {
+                    float t1 = (minArr[i] - originArr[i]) / dirArr[i];
+                    float t2 = (maxArr[i] - originArr[i]) / dirArr[i];
+                    if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+                    tmin = Math.Max(tmin, t1);
+                    tmax = Math.Min(tmax, t2);
+                    if (tmin > tmax) return null;
+                }
+            }
+            return tmin >= 0 ? (float?)tmin : (float?)null;
+        }
+
+        private float RaycastObstacleDistance(PointF origin, PointF dir, float maxDist, List<RectangleF> obstacleList)
+        {
+            float nearest = maxDist;
+            foreach (var obs in obstacleList)
+            {
+                float? hit = RayIntersectRect(origin, dir, obs);
+                if (hit.HasValue && hit.Value < nearest) nearest = hit.Value;
+            }
+            return nearest;
+        }
+
+        private void DrawVisionCone(Graphics g, PointF originWorld, PointF facing, List<RectangleF> obstacleList)
+        {
+            float diagonal = (float)Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
+            float maxRadiusPx = 51f / 51f * diagonal;
+
+            float baseAngle = (float)(Math.Atan2(facing.Y, facing.X) * 180.0 / Math.PI);
+            float halfFov = 60f;
+            int angularSteps = 40;
+            int radialSteps = 24;
+
+            for (int a = 0; a < angularSteps; a++)
+            {
+                float angle1 = baseAngle - halfFov + (a * (2 * halfFov) / angularSteps);
+                float angle2 = baseAngle - halfFov + ((a + 1) * (2 * halfFov) / angularSteps);
+
+                float rad1 = angle1 * (float)Math.PI / 180f;
+                float rad2 = angle2 * (float)Math.PI / 180f;
+
+                PointF dirMid = new PointF(
+                    (float)Math.Cos((rad1 + rad2) / 2f),
+                    (float)Math.Sin((rad1 + rad2) / 2f)
+                );
+
+                float occludedDist = RaycastObstacleDistance(originWorld, dirMid, maxRadiusPx, obstacleList);
+
+                for (int r = 0; r < radialSteps; r++)
+                {
+                    float rInner = occludedDist * (r / (float)radialSteps);
+                    float rOuter = occludedDist * ((r + 1) / (float)radialSteps);
+                    if (rInner >= occludedDist) break;
+
+                    float meters = ((rInner + rOuter) / 2f) / diagonal * 51f;
+                    Color zoneColor = GetZoneColor(meters);
+
+                    PointF w1 = new PointF(originWorld.X + (float)Math.Cos(rad1) * rInner, originWorld.Y + (float)Math.Sin(rad1) * rInner);
+                    PointF w2 = new PointF(originWorld.X + (float)Math.Cos(rad2) * rInner, originWorld.Y + (float)Math.Sin(rad2) * rInner);
+                    PointF w3 = new PointF(originWorld.X + (float)Math.Cos(rad2) * rOuter, originWorld.Y + (float)Math.Sin(rad2) * rOuter);
+                    PointF w4 = new PointF(originWorld.X + (float)Math.Cos(rad1) * rOuter, originWorld.Y + (float)Math.Sin(rad1) * rOuter);
+
+                    PointF p1 = ToIso(w1.X, w1.Y);
+                    PointF p2 = ToIso(w2.X, w2.Y);
+                    PointF p3 = ToIso(w3.X, w3.Y);
+                    PointF p4 = ToIso(w4.X, w4.Y);
+
+                    using (Brush b = new SolidBrush(zoneColor))
+                        g.FillPolygon(b, new[] { p1, p2, p3, p4 });
+                }
+            }
         }
 
         private PointF FromIso(PointF screen, float z = 0)
@@ -599,6 +793,51 @@ namespace EnemAI
             }
         }
 
+        private void DrawVisionCone2D(Graphics g, PointF originWorld, PointF facing, List<RectangleF> obstacleList)
+        {
+            float diagonal = (float)Math.Sqrt(FieldW * FieldW + FieldH * FieldH);
+            float maxRadiusPx = diagonal;
+
+            float baseAngle = (float)(Math.Atan2(facing.Y, facing.X) * 180.0 / Math.PI);
+            float halfFov = 60f;
+            int angularSteps = 40;
+            int radialSteps = 24;
+
+            for (int a = 0; a < angularSteps; a++)
+            {
+                float angle1 = baseAngle - halfFov + (a * (2 * halfFov) / angularSteps);
+                float angle2 = baseAngle - halfFov + ((a + 1) * (2 * halfFov) / angularSteps);
+
+                float rad1 = angle1 * (float)Math.PI / 180f;
+                float rad2 = angle2 * (float)Math.PI / 180f;
+
+                PointF dirMid = new PointF(
+                    (float)Math.Cos((rad1 + rad2) / 2f),
+                    (float)Math.Sin((rad1 + rad2) / 2f)
+                );
+
+                float occludedDist = RaycastObstacleDistance(originWorld, dirMid, maxRadiusPx, obstacleList);
+
+                for (int r = 0; r < radialSteps; r++)
+                {
+                    float rInner = occludedDist * (r / (float)radialSteps);
+                    float rOuter = occludedDist * ((r + 1) / (float)radialSteps);
+                    if (rInner >= occludedDist) break;
+
+                    float meters = ((rInner + rOuter) / 2f) / diagonal * 51f;
+                    Color zoneColor = GetZoneColor(meters);
+
+                    PointF p1 = new PointF(originWorld.X + (float)Math.Cos(rad1) * rInner, originWorld.Y + (float)Math.Sin(rad1) * rInner);
+                    PointF p2 = new PointF(originWorld.X + (float)Math.Cos(rad2) * rInner, originWorld.Y + (float)Math.Sin(rad2) * rInner);
+                    PointF p3 = new PointF(originWorld.X + (float)Math.Cos(rad2) * rOuter, originWorld.Y + (float)Math.Sin(rad2) * rOuter);
+                    PointF p4 = new PointF(originWorld.X + (float)Math.Cos(rad1) * rOuter, originWorld.Y + (float)Math.Sin(rad1) * rOuter);
+
+                    using (Brush b = new SolidBrush(zoneColor))
+                        g.FillPolygon(b, new[] { p1, p2, p3, p4 });
+                }
+            }
+        }
+
         private void DesignField_Paint(object sender, PaintEventArgs e)
         {
             var g = e.Graphics;
@@ -619,21 +858,7 @@ namespace EnemAI
                 }
             }
 
-            float angleRad = (float)Math.Atan2(enemy.FacingDirection.Y, enemy.FacingDirection.X);
-            float angleDeg = angleRad * (180f / (float)Math.PI);
-            float coneRadius = 150f;
-            Color coneColor = enemy.IsPlayerVisible ? Color.FromArgb(80, Color.LimeGreen) : Color.FromArgb(80, Color.Crimson);
-
-            using (SolidBrush coneBrush = new SolidBrush(coneColor))
-            {
-                g.FillPie(coneBrush, enemy.Position.X + CircleSize / 2 - coneRadius, enemy.Position.Y + CircleSize / 2 - coneRadius, coneRadius * 2, coneRadius * 2, angleDeg - 60f, 120f);
-            }
-            using (Pen rayPen = new Pen(coneColor, 2) { DashStyle = DashStyle.Dash })
-            {
-                g.DrawLine(rayPen, enemy.Position.X + CircleSize / 2, enemy.Position.Y + CircleSize / 2,
-                           enemy.Position.X + CircleSize / 2 + enemy.FacingDirection.X * coneRadius,
-                           enemy.Position.Y + CircleSize / 2 + enemy.FacingDirection.Y * coneRadius);
-            }
+            DrawVisionCone2D(g, new PointF(enemy.Position.X + CircleSize / 2, enemy.Position.Y + CircleSize / 2), enemy.FacingDirection, GetObstacleRects());
 
             g.FillEllipse(pBrush, playerPos.X, playerPos.Y, CircleSize, CircleSize);
             g.DrawString("P", new Font("Arial", 10, FontStyle.Bold), Brushes.White, playerPos.X + 8, playerPos.Y + 8);
@@ -728,32 +953,8 @@ namespace EnemAI
                 }
             }
 
-            float angleRad = (float)Math.Atan2(enemy.FacingDirection.Y, enemy.FacingDirection.X);
-            float coneRadius = 150f;
-            Color coneColor = enemy.IsPlayerVisible ? Color.FromArgb(80, Color.LimeGreen) : Color.FromArgb(80, Color.Crimson);
-            List<PointF> conePoints = new List<PointF>();
             PointF eCenterWorld = new PointF(enemy.Position.X + CircleSize / 2, enemy.Position.Y + CircleSize / 2);
-            conePoints.Add(ToIso(eCenterWorld.X, eCenterWorld.Y));
-
-            int segments = 12;
-            float startAngle = angleRad - (float)(Math.PI / 3);
-            float stepAngle = (float)(Math.PI * 2 / 3) / segments;
-
-            for (int i = 0; i <= segments; i++)
-            {
-                float a = startAngle + stepAngle * i;
-                conePoints.Add(ToIso(eCenterWorld.X + (float)Math.Cos(a) * coneRadius, eCenterWorld.Y + (float)Math.Sin(a) * coneRadius));
-            }
-
-            using (SolidBrush coneBrush = new SolidBrush(coneColor))
-            {
-                g.FillPolygon(coneBrush, conePoints.ToArray());
-            }
-
-            using (Pen rayPen = new Pen(coneColor, 2) { DashStyle = DashStyle.Dash })
-            {
-                g.DrawLine(rayPen, ToIso(eCenterWorld.X, eCenterWorld.Y), ToIso(eCenterWorld.X + enemy.FacingDirection.X * coneRadius, eCenterWorld.Y + enemy.FacingDirection.Y * coneRadius));
-            }
+            DrawVisionCone(g, eCenterWorld, enemy.FacingDirection, GetObstacleRects());
 
             DrawTrail(g, playerTrail, Color.RoyalBlue);
             DrawTrail(g, enemyTrail, stateColor);
