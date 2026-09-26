@@ -8,6 +8,10 @@ namespace EnemAI
 {
     public class BullsAI : Form
     {
+        private System.Windows.Forms.Timer animTimer;
+        private double dispHealth = 100, dispDistance = 51, dispAggro = 0;
+        private double targetHealth = 100, targetDistance = 51, targetAggro = 0;
+        private const double AnimSmoothing = 0.2;
         private TrackBar trackBar_EHealth, trackBar_PDistance;
         private Label label_EHealth, label_PDistance, enemyIcon, label_Aggro;
         private Panel field;
@@ -27,6 +31,8 @@ namespace EnemAI
         private const float FieldW = 430, FieldH = 250, CircleSize = 24, PlayerSpeed = 3f, EnemySpeed = 2f;
         private Random rng = new Random();
 
+
+
         public BullsAI()
         {
             LoadEnemyResource();
@@ -34,6 +40,10 @@ namespace EnemAI
             UpdateAiState();
             demoTimer = new System.Windows.Forms.Timer { Interval = 50 };
             demoTimer.Tick += DemoTimer_Tick;
+
+            animTimer = new System.Windows.Forms.Timer { Interval = 20 };
+            animTimer.Tick += AnimTimer_Tick;
+            animTimer.Start();
         }
 
         private void LoadEnemyResource()
@@ -80,7 +90,7 @@ namespace EnemAI
         label_PDistance, trackBar_PDistance
     });
 
-            Label edgeLabel = new Label { Text = "Edge Case Tests:", Location = new Point(15, 195), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Bold) };
+            Label edgeLabel = new Label { Text = "Edge Case Tests (DO NOT USE IF PLAYERS ARE INSTANTIATED):", Location = new Point(15, 195), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Bold) };
             inputGroup.Controls.Add(edgeLabel);
 
             FlowLayoutPanel edgeButtons = new FlowLayoutPanel { Location = new Point(15, 220), Size = new Size(430, 90), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
@@ -201,19 +211,13 @@ namespace EnemAI
             enemy.UpdateBehavior(trackBar_EHealth.Value, trackBar_PDistance.Value);
             label_Aggro.Text = $"Aggressiveness {enemy.CurrentAggro:F1}%";
 
-            healthGraph.CurrentValue = trackBar_EHealth.Value;
-            distanceGraph.CurrentValue = trackBar_PDistance.Value;
-            healthGraph.Invalidate();
-            distanceGraph.Invalidate();
+            targetHealth = trackBar_EHealth.Value;
+            targetDistance = trackBar_PDistance.Value;
+            targetAggro = enemy.CurrentAggro;
 
             outputGraph.Curve = enemy.LastResult.Curve ?? new List<(double, double)>();
-            outputGraph.Centroid = enemy.CurrentAggro;
-            outputGraph.Invalidate();
 
             RefreshRuleGrid();
-            surfacePanel.MarkerHealth = trackBar_EHealth.Value;
-            surfacePanel.MarkerDistance = trackBar_PDistance.Value;
-            surfacePanel.Invalidate();
 
             switch (enemy.CurrentState)
             {
@@ -242,6 +246,24 @@ namespace EnemAI
                     enemyIcon.Text = "ATTACKING\n⚔️";
                     break;
             }
+        }
+
+        private void AnimTimer_Tick(object sender, EventArgs e)
+        {
+            dispHealth += (targetHealth - dispHealth) * AnimSmoothing;
+            dispDistance += (targetDistance - dispDistance) * AnimSmoothing;
+            dispAggro += (targetAggro - dispAggro) * AnimSmoothing;
+
+            healthGraph.CurrentValue = dispHealth;
+            distanceGraph.CurrentValue = dispDistance;
+            outputGraph.Centroid = dispAggro;
+            surfacePanel.MarkerHealth = dispHealth;
+            surfacePanel.MarkerDistance = dispDistance;
+
+            healthGraph.Invalidate();
+            distanceGraph.Invalidate();
+            outputGraph.Invalidate();
+            surfacePanel.Invalidate();
         }
 
         private void RefreshRuleGrid()
@@ -553,4 +575,7 @@ namespace EnemAI
             return Color.FromArgb(r, gg, bb);
         }
     }
+
+
 }
+
