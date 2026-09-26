@@ -38,6 +38,10 @@ namespace EnemAI
         private float lastEnemyHeight = 18;
         private const float IsoScaleX = 0.6f, IsoScaleY = 0.32f;
 
+        private Queue<PointF> playerTrail = new Queue<PointF>();
+        private Queue<PointF> enemyTrail = new Queue<PointF>();
+        private const int MaxTrailLength = 15;
+        private int tickCounter = 0;
 
         public BullsAI()
         {
@@ -92,11 +96,11 @@ namespace EnemAI
             };
 
             inputGroup.Controls.AddRange(new Control[] {
-            new Label { Text = "Current Health (%)", Location = new Point(15, 30), AutoSize = true },
-            label_EHealth, trackBar_EHealth,
-            new Label { Text = "Player Distance (m)", Location = new Point(15, 110), AutoSize = true },
-            label_PDistance, trackBar_PDistance
-        });
+                new Label { Text = "Current Health (%)", Location = new Point(15, 30), AutoSize = true },
+                label_EHealth, trackBar_EHealth,
+                new Label { Text = "Player Distance (m)", Location = new Point(15, 110), AutoSize = true },
+                label_PDistance, trackBar_PDistance
+            });
 
             Label edgeLabel = new Label { Text = "Edge Case Tests:", Location = new Point(15, 195), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Bold) };
             inputGroup.Controls.Add(edgeLabel);
@@ -116,14 +120,14 @@ namespace EnemAI
             inputGroup.Controls.Add(ruleTriggerLabel);
 
             FlowLayoutPanel ruleButtons = new FlowLayoutPanel { Location = new Point(15, 345), Size = new Size(335, 110), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
-            AddEdgeButton(ruleButtons, "R1 (High/Near)", 100, 1, 105);
+            AddEdgeButton(ruleButtons, "R1", 100, 1, 105);
             AddEdgeButton(ruleButtons, "R2 (Low/Near)", 1, 1, 105);
-            AddEdgeButton(ruleButtons, "R3 (Med/Med)", 50, 25, 105);
+            AddEdgeButton(ruleButtons, "R3", 50, 25, 105);
             AddEdgeButton(ruleButtons, "R4 (Low/Far)", 1, 51, 105);
             AddEdgeButton(ruleButtons, "R5 (High/Far)", 100, 51, 105);
-            AddEdgeButton(ruleButtons, "R6 (High/Med)", 100, 25, 105);
+            AddEdgeButton(ruleButtons, "R6", 100, 25, 105);
             AddEdgeButton(ruleButtons, "R7 (Low/Med)", 1, 25, 105);
-            AddEdgeButton(ruleButtons, "R8 (Med/Near)", 50, 1, 105);
+            AddEdgeButton(ruleButtons, "R8", 50, 1, 105);
             AddEdgeButton(ruleButtons, "R9 (Med/Far)", 50, 51, 105);
             inputGroup.Controls.Add(ruleButtons);
 
@@ -358,6 +362,8 @@ namespace EnemAI
 
         private void DemoTimer_Tick(object sender, EventArgs e)
         {
+            tickCounter++;
+
             if (!isDraggingPlayer)
             {
                 float dx = 0, dy = 0;
@@ -382,6 +388,12 @@ namespace EnemAI
 
             if (!isDraggingEnemy)
                 enemy.Move(playerPos, EnemySpeed, FieldW, FieldH, CircleSize);
+
+            playerTrail.Enqueue(new PointF(playerPos.X, playerPos.Y));
+            if (playerTrail.Count > MaxTrailLength) playerTrail.Dequeue();
+
+            enemyTrail.Enqueue(new PointF(enemy.Position.X, enemy.Position.Y));
+            if (enemyTrail.Count > MaxTrailLength) enemyTrail.Dequeue();
 
             field.Invalidate();
         }
@@ -454,66 +466,80 @@ namespace EnemAI
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            using (Pen gridPen = new Pen(Color.FromArgb(90, Color.SlateGray)))
+            using (Brush lightTile = new SolidBrush(Color.FromArgb(240, 245, 250)))
+            using (Brush darkTile = new SolidBrush(Color.FromArgb(225, 230, 240)))
+            using (Pen gridPen = new Pen(Color.FromArgb(50, Color.SlateGray), 1))
             {
-                int gridSize = 40;
-                for (int gx = 0; gx <= FieldW; gx += gridSize)
+                int tileSize = 40;
+                for (int gx = 0; gx < FieldW; gx += tileSize)
                 {
-                    PointF a = ToIso(gx, 0);
-                    PointF b = ToIso(gx, FieldH);
-                    g.DrawLine(gridPen, a, b);
-                }
-                for (int gy = 0; gy <= FieldH; gy += gridSize)
-                {
-                    PointF a = ToIso(0, gy);
-                    PointF b = ToIso(FieldW, gy);
-                    g.DrawLine(gridPen, a, b);
+                    for (int gy = 0; gy < FieldH; gy += tileSize)
+                    {
+                        PointF p1 = ToIso(gx, gy);
+                        PointF p2 = ToIso(gx + tileSize, gy);
+                        PointF p3 = ToIso(gx + tileSize, gy + tileSize);
+                        PointF p4 = ToIso(gx, gy + tileSize);
+
+                        Brush b = ((gx / tileSize) + (gy / tileSize)) % 2 == 0 ? lightTile : darkTile;
+                        g.FillPolygon(b, new[] { p1, p2, p3, p4 });
+                        g.DrawPolygon(gridPen, new[] { p1, p2, p3, p4 });
+                    }
                 }
             }
 
-            using (Pen borderPen = new Pen(Color.DimGray, 2))
+            using (Pen borderPen = new Pen(Color.DimGray, 3))
             {
-                PointF c1 = ToIso(0, 0);
-                PointF c2 = ToIso(FieldW, 0);
-                PointF c3 = ToIso(FieldW, FieldH);
-                PointF c4 = ToIso(0, FieldH);
-                g.DrawPolygon(borderPen, new[] { c1, c2, c3, c4 });
+                g.DrawPolygon(borderPen, new[] { ToIso(0, 0), ToIso(FieldW, 0), ToIso(FieldW, FieldH), ToIso(0, FieldH) });
             }
+
+            float bobPlayer = (float)Math.Sin(tickCounter * 0.3f) * 4f;
+            float bobEnemy = (float)Math.Cos(tickCounter * 0.3f) * 4f;
 
             PointF playerBase = ToIso(playerPos.X, playerPos.Y);
-            PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26);
+            float enemyHeight = enemy.CurrentState == "ATTACKING" ? 34 : enemy.CurrentState == "ALERT" ? 24 : enemy.CurrentState == "FLEEING" ? 14 : enemy.CurrentState == "DEAD" ? 4 : 18;
+            lastEnemyHeight = enemyHeight;
+            PointF enemyBase = ToIso(enemy.Position.X, enemy.Position.Y);
+            Color stateColor = GetStateColor(enemy.CurrentState);
 
-            using (Brush shadowBrush = new SolidBrush(Color.FromArgb(60, Color.Black)))
-                g.FillEllipse(shadowBrush, playerBase.X - CircleSize / 2, playerBase.Y - CircleSize / 4, CircleSize, CircleSize / 2);
+            if (enemy.CurrentAggro > 0 && enemy.CurrentState != "DEAD")
+            {
+                float aggroRadius = (float)(enemy.CurrentAggro / 100.0 * 150f) + 15f;
+                using (GraphicsPath path = new GraphicsPath())
+                {
+                    path.AddEllipse(enemyBase.X - aggroRadius, enemyBase.Y - aggroRadius * IsoScaleY, aggroRadius * 2, aggroRadius * 2 * IsoScaleY);
+                    using (PathGradientBrush pgb = new PathGradientBrush(path))
+                    {
+                        pgb.CenterColor = Color.FromArgb(Math.Min(180, (int)(enemy.CurrentAggro * 1.8)), Color.Crimson);
+                        pgb.SurroundColors = new[] { Color.Transparent };
+                        g.FillPath(pgb, path);
+                    }
+                }
+            }
 
-            using (Pen stemPen = new Pen(Color.RoyalBlue, 4))
-                g.DrawLine(stemPen, playerBase, playerTop);
+            DrawTrail(g, playerTrail, Color.RoyalBlue);
+            DrawTrail(g, enemyTrail, stateColor);
+
+            using (Brush shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
+            {
+                float pShadowScale = Math.Max(0.4f, 1f - (26 + bobPlayer) / 100f);
+                g.FillEllipse(shadowBrush, playerBase.X - (CircleSize * pShadowScale) / 2, playerBase.Y - (CircleSize * pShadowScale) / 4, CircleSize * pShadowScale, (CircleSize * pShadowScale) / 2);
+
+                float eShadowScale = Math.Max(0.4f, 1f - (enemyHeight + bobEnemy) / 100f);
+                g.FillEllipse(shadowBrush, enemyBase.X - (CircleSize * eShadowScale) / 2, enemyBase.Y - (CircleSize * eShadowScale) / 4, CircleSize * eShadowScale, (CircleSize * eShadowScale) / 2);
+            }
+
+            PointF playerTop = ToIso(playerPos.X, playerPos.Y, 26 + bobPlayer);
+            using (Pen stemPen = new Pen(Color.FromArgb(120, Color.RoyalBlue), 3)) g.DrawLine(stemPen, playerBase, playerTop);
 
             g.FillEllipse(Brushes.RoyalBlue, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
-            using (Pen outline = new Pen(Color.White, 2))
-                g.DrawEllipse(outline, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
 
-            float enemyHeight = enemy.CurrentState == "ATTACKING" ? 34
-                : enemy.CurrentState == "ALERT" ? 24
-                : enemy.CurrentState == "FLEEING" ? 14
-                : enemy.CurrentState == "DEAD" ? 4
-                : 18;
-            lastEnemyHeight = enemyHeight;
+            using (Brush highlight = new SolidBrush(Color.FromArgb(90, Color.White)))
+                g.FillEllipse(highlight, playerTop.X - CircleSize / 4, playerTop.Y - CircleSize / 3, CircleSize / 2, CircleSize / 3);
 
-            PointF enemyBase = ToIso(enemy.Position.X, enemy.Position.Y);
-            PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight);
+            using (Pen outline = new Pen(Color.White, 2)) g.DrawEllipse(outline, playerTop.X - CircleSize / 2, playerTop.Y - CircleSize / 2, CircleSize, CircleSize);
 
-            Color stateColor = enemy.CurrentState == "DEAD" ? Color.Black
-                : enemy.CurrentState == "ATTACKING" ? Color.Red
-                : enemy.CurrentState == "FLEEING" ? Color.RoyalBlue
-                : enemy.CurrentState == "ALERT" ? Color.Orange
-                : Color.LightGray;
-
-            using (Brush shadowBrush = new SolidBrush(Color.FromArgb(60, Color.Black)))
-                g.FillEllipse(shadowBrush, enemyBase.X - CircleSize / 2, enemyBase.Y - CircleSize / 4, CircleSize, CircleSize / 2);
-
-            using (Pen stemPen = new Pen(stateColor, 4))
-                g.DrawLine(stemPen, enemyBase, enemyTop);
+            PointF enemyTop = ToIso(enemy.Position.X, enemy.Position.Y, enemyHeight + bobEnemy);
+            using (Pen stemPen = new Pen(Color.FromArgb(120, stateColor), 3)) g.DrawLine(stemPen, enemyBase, enemyTop);
 
             RectangleF enemyRect = new RectangleF(enemyTop.X - CircleSize / 2, enemyTop.Y - CircleSize / 2, CircleSize, CircleSize);
 
@@ -530,11 +556,43 @@ namespace EnemAI
             }
             else
             {
-                g.FillEllipse(Brushes.DarkGray, enemyRect);
+                g.FillEllipse(new SolidBrush(Color.DarkGray), enemyRect);
             }
 
-            using (Pen statePen = new Pen(stateColor, 3))
-                g.DrawEllipse(statePen, enemyRect);
+            using (Pen statePen = new Pen(stateColor, 3)) g.DrawEllipse(statePen, enemyRect);
+
+            if (enemy.CurrentState == "ATTACKING" || enemy.CurrentState == "FLEEING")
+            {
+                using (Pen targetPen = new Pen(Color.FromArgb(140, stateColor), 2) { DashStyle = DashStyle.Dash })
+                {
+                    g.DrawLine(targetPen, enemyTop, playerTop);
+                }
+            }
+        }
+
+        private Color GetStateColor(string state)
+        {
+            return state == "DEAD" ? Color.Black
+                 : state == "ATTACKING" ? Color.Red
+                 : state == "FLEEING" ? Color.RoyalBlue
+                 : state == "ALERT" ? Color.Orange
+                 : Color.LightGray;
+        }
+
+        private void DrawTrail(Graphics g, Queue<PointF> trail, Color color)
+        {
+            if (trail.Count < 2) return;
+            PointF[] pts = trail.ToArray();
+            for (int i = 0; i < pts.Length - 1; i++)
+            {
+                int alpha = (int)(200 * ((float)i / pts.Length));
+                using (Pen p = new Pen(Color.FromArgb(alpha, color), (float)(CircleSize * 0.4)))
+                {
+                    p.StartCap = LineCap.Round;
+                    p.EndCap = LineCap.Round;
+                    g.DrawLine(p, ToIso(pts[i].X, pts[i].Y), ToIso(pts[i + 1].X, pts[i + 1].Y));
+                }
+            }
         }
     }
 
