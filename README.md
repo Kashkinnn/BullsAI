@@ -1,90 +1,65 @@
-# BullsAI - A Fuzzy Logic RPG Enemy AI
+# BullsAI
 
-A Windows Forms demo project implementing an RPG enemy's behavior using a **Mamdani fuzzy inference system**. The enemy's aggressiveness is computed from two inputs — its own health and its distance to the player — and drives both a manual-control test panel and a live, movable WASD demo.
+A fuzzy logic–driven enemy AI for a top-down/isometric game demo, built in C# WinForms. The project demonstrates a full Mamdani fuzzy inference pipeline (fuzzification → rule evaluation → aggregation → centroid defuzzification) controlling an enemy's aggression, layered with a perception system (vision cone, line-of-sight, memory decay) and a live, interactive 2D/3D simulation.
 
-## Overview
+## What it does
 
-Instead of hard-coded `if/else` thresholds, the enemy's behavior is governed by fuzzy logic: linguistic concepts like "healthy," "hurt," "near," and "far" are modeled as overlapping membership functions rather than sharp cutoffs. This produces smoother, more human-like behavioral transitions than a crisp rule table would.
+The enemy's behavior — Idle, Fleeing, Alert, or Attacking — is driven by a fuzzy logic controller that takes two inputs, **Health** and **Distance to player**, and outputs a single **Aggressiveness** score (0–100). That score is computed live and visualized in real time alongside the simulation: membership function graphs, the aggregated output curve, a rule-firing table, and a full control-surface heatmap.
 
-**Inputs:**
-| Variable | Range | Meaning |
-|---|---|---|
-| Health | 0–100 | Enemy's current HP, as a percentage |
-| Distance | 0–51 | Distance to the player in meters (51 represents "beyond 50m") |
+On top of the fuzzy core sits a lightweight perception layer: the enemy only reacts to the player's *true* distance when it can actually see them (within a vision cone, with line-of-sight checked against obstacles, or within close proximity). When sight is lost, its perceived distance drifts gradually back toward "far" rather than snapping instantly, so its behavior degrades smoothly instead of flickering.
 
-**Output:**
-| Variable | Range | Meaning |
-|---|---|---|
-| Aggro | 0–100 | A continuous aggression score, mapped to one of four states |
+## Features
 
-**Output states:** `Fleeing` → `Idle` → `Alert` → `Attacking`, determined by thresholding the defuzzified Aggro score.
+- **Mamdani fuzzy inference engine** — 9 rules over Health (Low/Med/High) × Distance (Near/Med/Far), Math.Min for rule strength, Math.Max for aggregation, centroid defuzzification for the crisp output.
+- **Live 3D isometric demo** — WASD-controlled player, autonomous enemy AI, draggable characters, dynamic camera (follow player / follow enemy / manual pan), motion trails, bobbing sprite animation.
+- **Live 2D obstacle editor** — top-down grid view for placing/removing obstacles (left-click to add, right-click to remove), toggled with a single button; obstacles are shared between both views.
+- **Vision cone visualization** — a 120° perception cone rendered with tiered color zones (red/amber/grey) matching the fuzzy distance sets, raycast against obstacles so it visually stops at walls.
+- **Manual controls** — sliders for Health and Distance, adjustable player/enemy speed, one-click edge-case test buttons (boundary values) and rule-trigger buttons (jump straight to any of the 9 rules).
+- **Real-time fuzzy visualization panel** — membership graphs for both inputs, the aggregated output curve with centroid marker, a live rule-firing table, and a health×distance control-surface heatmap.
+- **Random environment generation** — procedurally scatters obstacles across the grid, avoiding the player's and enemy's current tiles.
 
-## Project Structure
+## Project structure
 
 ```
-EnemAI/
-├── BullsAI.cs        # Main Form: UI (sliders, status card), live WASD demo, rendering
-└── FuzzyEngine.cs     # Static fuzzy inference engine (fuzzification → rules → defuzzification)
+FuzzyEngine.cs           Fuzzy logic core — membership functions, rule base, defuzzification
+EnemyAgent.cs             Enemy perception (vision/LoS/memory) and movement/steering
+EnvironmentGenerator.cs   Random obstacle placement utility
+BullsAI.cs                Form, UI, game loop, rendering (2D + isometric 3D), all custom-drawn panels
 ```
 
-`FuzzyEngine.Evaluate(health, distance)` is decoupled from the UI — it takes two doubles and returns a `FuzzyResult { Aggressiveness, State }` struct, so it can be tested or reused independently of the Form.
-
-## How It Works
-
-### 1. Fuzzification
-Health and Distance are each converted into three linguistic membership values using triangular membership functions:
-
-| Variable | Low/Near | Medium | High/Far |
-|---|---|---|---|
-| Health | (1, 1, 40) | (25, 50, 80) | (60, 100, 100) |
-| Distance | (0, 0, 20) | (10, 25, 40) | (30, 50, 50) |
-
-### 2. Rule Base
-9 rules cover every combination of Health × Distance:
-
-| Health \ Distance | Near | Medium | Far |
-|---|---|---|---|
-| **Low** | Fleeing | Fleeing | Idle |
-| **Medium** | Attacking | Alert | Idle |
-| **High** | Attacking | Alert | Idle |
-
-Each rule uses `Math.Min` for the fuzzy AND between its two conditions.
-
-### 3. Aggregation & Defuzzification
-Rules sharing the same output category are combined with `Math.Max` (fuzzy OR), clipped against that category's output membership function, then aggregated across all four categories with `Math.Max`. The result is defuzzified using the **centroid (center of gravity)** method, computed numerically over the output range in steps of 1.0.
-
-### 4. Output Thresholds
-| Aggro | State |
+| File | Responsibility |
 |---|---|
-| < 15 | Fleeing |
-| 15 – 44.9 | Idle |
-| 45 – 74.9 | Alert |
-| ≥ 75 | Attacking |
+| `FuzzyEngine.cs` | Pure fuzzy logic. `Evaluate(health, distance)` runs the full Mamdani pipeline and returns a `FuzzyResult` containing the crisp aggression score, the state label, every membership degree, the full output curve, and every rule's firing strength. |
+| `EnemyAgent.cs` | Owns the enemy's position and decision loop. `UpdateBehavior(...)` decides what the enemy can currently perceive and feeds the right distance into `FuzzyEngine`; `Move(...)` turns the resulting state into steering behavior with obstacle avoidance. |
+| `EnvironmentGenerator.cs` | One static method that randomly generates a set of obstacle grid coordinates. |
+| `BullsAI.cs` | The WinForms `Form`, all UI controls, the central game loop (`GameTimer_Tick`), isometric projection math, vision cone rendering, and the custom `Panel` subclasses used for the graphs and heatmap. |
 
-One crisp exception exists outside the fuzzy engine: `Health ≤ 0` immediately returns a `DEAD` state, since death is a discrete condition, not a fuzzy one.
+## Requirements
 
-## Running the Project
+- .NET Framework (WinForms) — Visual Studio or any compatible IDE
+- No external NuGet packages required
 
-**Requirements:** .NET Framework / .NET (Windows Forms support), Visual Studio or `dotnet build`.
+## Running it
 
-1. Open the project in Visual Studio (or run `dotnet run` from the project directory).
-2. The main window shows:
-   - **Enemy Status** — live icon and aggression readout.
-   - **Manual Controls** — sliders to directly set Health and Distance and observe the resulting state.
-   - **Live Demo** — a small field where you can move the player (WASD) and watch the enemy react in real time.
+1. Open the project in Visual Studio.
+2. Build and run — the main window (`BullsAI`) launches directly into the control panel and demo view.
+3. Click **Set** to randomize the player/enemy positions and start the live simulation, or use the sliders and test buttons to explore the fuzzy logic without moving anything.
 
-**Live Demo controls:**
-| Key / Button | Action |
+## Controls (live demo)
+
+| Input | Action |
 |---|---|
 | `W` `A` `S` `D` | Move the player |
-| Start | Begin the live simulation |
-| Stop | Pause the simulation |
-| Attack (−10 HP) | Damage the enemy to test health-driven behavior changes |
+| Click + drag player/enemy circle | Reposition either character manually |
+| Click + drag field (Manual camera mode) | Pan the camera |
+| **Set** | Randomize positions and start the simulation |
+| **Stop** | Freeze the simulation |
+| **Attack (-10 HP)** | Damage the enemy |
+| **2D / 3D** toggle | Switch between the obstacle editor and the live isometric view |
+| **Clear Blocks** / **Random Env** | Clear or regenerate obstacles |
 
-## Known Limitation: Defuzzification Straddling
+## Notes
 
-Because centroid defuzzification averages over the *entire* combined output shape rather than picking a single winning category, the crisp Aggro value can occasionally land inside a numeric band whose corresponding rule was never actually active — for example, briefly reading "Alert" while transitioning from Attacking to Fleeing at close range, even though no Alert rule can fire at that distance. This is a known, well-documented characteristic of centroid defuzzification with well-separated, multi-modal outputs, not a defect in the rule base. See the accompanying technical documentation for a full analysis, measured frequency, and possible mitigations (Mean-of-Maximum defuzzification or explicit tie-breaking rules).
-
-## Credits
-
-Triangular membership function implementation adapted from course material (Intelligent Systems).
+- The fuzzy engine (`FuzzyEngine.cs`) is completely independent of the UI and the perception system — it can be tested or reused on its own with just `(health, distance)` as input.
+- Manual slider/button input bypasses the perception layer entirely (`isManualOverride = true`) so the fuzzy logic itself can be tested in isolation from vision/LoS effects.
+- A full technical walkthrough of every class and method is available separately in `BullsAI_Technical_Walkthrough.docx`.
