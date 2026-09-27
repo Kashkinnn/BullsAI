@@ -62,4 +62,3 @@ BullsAI.cs                Form, UI, game loop, rendering (2D + isometric 3D), al
 
 - The fuzzy engine (`FuzzyEngine.cs`) is completely independent of the UI and the perception system — it can be tested or reused on its own with just `(health, distance)` as input.
 - Manual slider/button input bypasses the perception layer entirely (`isManualOverride = true`) so the fuzzy logic itself can be tested in isolation from vision/LoS effects.
-- A full technical walkthrough of every class and method is available separately in `BullsAI_Technical_Walkthrough.docx`.
